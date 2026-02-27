@@ -1,0 +1,135 @@
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
+
+/**
+ * Apply Vertical Crop (9:16)
+ * Responsabilidade única:
+ * - Receber a decisão da MarvelVerticalCrop
+ * - Aplicar o crop exatamente como decidido
+ * - Gerar o vídeo final
+ *
+ * NÃO contém lógica de decisão.
+ * NÃO altera estratégia.
+ * NÃO recalcula nada.
+ */
+
+async function applyVerticalCrop({
+  jobId,
+  clipId,
+  inputVideoPath,
+  outputVideoPath,
+  cropDecision,
+}) {
+  // ============================
+  // VALIDACOES
+  // ============================
+  if (!jobId) throw new Error('[applyVerticalCrop] jobId ausente');
+  if (!clipId) throw new Error('[applyVerticalCrop] clipId ausente');
+
+  if (!inputVideoPath || !fs.existsSync(inputVideoPath)) {
+    throw new Error('[applyVerticalCrop] inputVideoPath inválido ou inexistente');
+  }
+
+  if (!outputVideoPath) {
+    throw new Error('[applyVerticalCrop] outputVideoPath ausente');
+  }
+
+  if (!cropDecision) {
+    throw new Error('[applyVerticalCrop] cropDecision ausente');
+  }
+
+  const { cropX, cropY, cropWidth, cropHeight, strategy } = cropDecision;
+
+  if (
+    [cropX, cropY, cropWidth, cropHeight].some(
+      (v) => typeof v !== 'number' || isNaN(v)
+    )
+  ) {
+    throw new Error('[applyVerticalCrop] cropDecision inválido');
+  }
+
+  // ============================
+  // GARANTIR DIRETORIO DE OUTPUT
+  // ============================
+  fs.mkdirSync(path.dirname(outputVideoPath), { recursive: true });
+
+  // ============================
+  // LOG DE DEBUG PROFISSIONAL
+  // ============================
+  console.log('🎬 ApplyVerticalCrop', {
+    jobId,
+    clipId,
+    strategy,
+    crop: {
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
+    },
+  });
+
+  // ============================
+  // COMANDO FFMPEG
+  // ============================
+  /**
+   * Importante:
+   * - crop vem ANTES do scale
+   * - garante que não há distorção
+   * - saída padronizada 9:16 (720x1280)
+   */
+  const ffmpegCmd = `
+    ffmpeg -y -i "${inputVideoPath}" \
+    -vf "crop=${cropWidth}:${cropHeight}:${cropX}:${cropY},scale=720:1280" \
+    -c:v libx264 -preset fast -crf 18 \
+    -pix_fmt yuv420p \
+    -movflags +faststart \
+    -c:a copy \
+    "${outputVideoPath}"
+  `;
+
+  await execPromise(ffmpegCmd);
+
+  // ============================
+  // VALIDACAO FINAL
+  // ============================
+  if (!fs.existsSync(outputVideoPath)) {
+    throw new Error('[applyVerticalCrop] vídeo final não foi gerado');
+  }
+
+  console.log('✅ Vertical crop aplicado com sucesso:', outputVideoPath);
+
+  // ============================
+  // OUTPUT LIMPO
+  // ============================
+  return {
+    jobId,
+    clipId,
+    outputVideoPath,
+    appliedCrop: {
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
+      strategy,
+    },
+  };
+}
+
+// ============================
+// HELPER
+// ============================
+
+function execPromise(command) {
+  return new Promise((resolve, reject) => {
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error('❌ FFmpeg stderr:', stderr);
+        return reject(error);
+      }
+      resolve();
+    });
+  });
+}
+
+module.exports = applyVerticalCrop;

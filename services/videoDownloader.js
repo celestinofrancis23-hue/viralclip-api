@@ -1,0 +1,91 @@
+const fs = require("fs");
+const path = require("path");
+const ytdlp = require("yt-dlp-exec");
+
+function safeMkdir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function listDir(dir) {
+  try {
+    return fs.readdirSync(dir).map((f) => path.join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
+module.exports = async function videoDownloader(job, baseTempDir) {
+  const { jobId, source } = job;
+
+  if (!jobId) throw new Error("[VideoDownloader] jobId é obrigatório");
+  if (!source || !source.url) {
+    throw new Error("[VideoDownloader] source.url é obrigatório");
+  }
+
+  console.log("⬇️ [VideoDownloader] Download máximo real:", source.url);
+
+  const jobDir = path.join(baseTempDir, String(jobId));
+  safeMkdir(jobDir);
+
+  const outputPath = path.join(jobDir, "source.%(ext)s");
+
+  const baseOptions = {
+    output: outputPath,
+
+    // 🔥 MELHOR QUALIDADE DISPONÍVEL SEM LIMITES
+
+format: "bestvideo+bestaudio/best",
+    // Permite qualquer container (mp4/webm/mkv)
+    mergeOutputFormat: "mkv",
+
+    noWarnings: true,
+    quiet: false,
+
+    retries: 10,
+    fragmentRetries: 10,
+
+    extractorArgs: "youtube:player_client=android,web",
+
+    addHeader: [
+      "User-Agent: Mozilla/5.0",
+      "Accept-Language: en-US,en;q=0.9",
+    ],
+  };
+
+  try {
+    await ytdlp(source.url, baseOptions);
+  } catch (err) {
+    const files = listDir(jobDir);
+    console.error("❌ yt-dlp falhou. Arquivos:", files);
+
+    throw new Error(
+      `[VideoDownloader] Falha no download: ${err?.message || err}`
+    );
+  }
+
+  const files = listDir(jobDir);
+  const videoFile = files.find((f) =>
+    f.match(/\.(mp4|mkv|webm)$/i)
+  );
+
+  if (!videoFile) {
+    throw new Error(
+      `[VideoDownloader] Nenhum vídeo gerado.\nArquivos:\n- ${files.join("\n- ")}`
+    );
+  }
+
+  const size = fs.statSync(videoFile).size;
+
+  if (size < 500_000) {
+    throw new Error(
+      `[VideoDownloader] Vídeo muito pequeno (${size} bytes).`
+    );
+  }
+
+  console.log("✅ [VideoDownloader] Download concluído:", videoFile);
+
+  return {
+    videoPath: videoFile,
+    jobDir,
+  };
+};
