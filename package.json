@@ -1,10 +1,17 @@
 {
+  "name": "viralclip-api",
+  "version": "1.0.0",
+  "description": "ViralClip Backend API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.967.0",
     "@supabase/supabase-js": "^2.78.0",
-    "cors": "^2.8.6",
+    "cors": "^2.8.5",
     "dotenv": "^17.3.1",
-    "express": "^5.2.1",
+    "express": "^4.18.2",
     "stripe": "^20.3.1",
     "yt-dlp-exec": "^1.0.2"
   }
