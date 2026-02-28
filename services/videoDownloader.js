@@ -52,8 +52,15 @@ format: "bestvideo+bestaudio/best",
     ],
   };
 
+const opts = {
+  ...baseOptions,
+  // força o yt-dlp global instalado no Docker
+  binaryPath: "/usr/local/bin/yt-dlp",
+};
+
+
   try {
-    await ytdlp(source.url, baseOptions);
+    await ytdlp(source.url, opts);
   } catch (err) {
     const files = listDir(jobDir);
     console.error("❌ yt-dlp falhou. Arquivos:", files);
