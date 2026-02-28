@@ -8,7 +8,7 @@ const WordSplitterWorker = require('../../workers/WordSplitterWorker');
 const wordTimingNormalizer = require('../../workers/wordTimingNormalizer');
 const WordCaseNormalizerWorker = require('../../workers/WordCaseNormalizerWorker');
 const HighlightTimelineBuilder = require('../../workers/HighlightTimelineBuilder');
-const CaptionLayoutBuilder = require('../../workers/CaptionLayoutBuilder');
+const CaptionLayoutBuilder = require('../../workers/captionLayoutBuilder');
 const ASSSubtitleBuilder = require('../../workers/ASSSubtitleBuilder');
 const BurnInWorker = require('../../workers/BurnInWorker');
 

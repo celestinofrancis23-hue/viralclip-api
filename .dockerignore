@@ -1,0 +1,15 @@
+knode_modules
+.env
+.git
+.DS_Store
+
+# arquivos pesados do teu pipeline
+downloads
+uploads
+temp
+vertical_clips
+burned_clips
+whisper_out
+whisper_test_output
+*.mp4
+*.mov
