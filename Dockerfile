@@ -1,17 +1,20 @@
 FROM node:22-bookworm-slim
 
-# Instala dependências do sistema (python3 + ffmpeg)
+# Instala dependências do sistema
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  python3 \
-  python3-pip \
-  ffmpeg \
-  ca-certificates \
-  curl \
-  && rm -rf /var/lib/apt/lists/*
+    python3 \
+    python3-pip \
+    ffmpeg \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala yt-dlp globalmente
+RUN pip3 install --no-cache-dir yt-dlp
 
 WORKDIR /app
 
-# Instala dependências primeiro
+# Instala dependências Node primeiro (cache eficiente)
 COPY package*.json ./
 RUN npm install --ignore-scripts
 
