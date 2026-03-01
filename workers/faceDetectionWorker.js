@@ -8,6 +8,20 @@ function assertFileExists(filePath, label) {
   }
 }
 
+function resolvePythonBinary() {
+  // Se existir venv local, usa ela
+  const venvPath = path.join(process.cwd(), ".venv", "bin", "python");
+
+  if (fs.existsSync(venvPath)) {
+    console.log("🐍 Usando Python da venv:", venvPath);
+    return venvPath;
+  }
+
+  // Caso contrário, usa python3 global (Docker / Railway)
+  console.log("🐍 Usando Python global (python3)");
+  return "python3";
+}
+
 function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
   return new Promise((resolve, reject) => {
     try {
@@ -25,15 +39,7 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
 
       assertFileExists(pythonScript, "face_detection.py");
 
-      // 🔥 FORÇA uso da VENV
-      const pythonBin = path.join(
-        process.cwd(),
-        ".venv",
-        "bin",
-        "python"
-      );
-
-      assertFileExists(pythonBin, "Python da venv");
+      const pythonBin = resolvePythonBinary();
 
       console.log("👤 [FaceDetectionWorker] Iniciando...");
       console.log("🐍 Python:", pythonBin);
