@@ -14,6 +14,22 @@ function listDir(dir) {
   }
 }
 
+function ensureFileLooksValid(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error("[VideoDownloader] Arquivo não encontrado.");
+  }
+
+  const size = fs.statSync(filePath).size;
+
+  if (size < 1_000_000) {
+    throw new Error(
+      `[VideoDownloader] Arquivo muito pequeno (${size} bytes). Possível falha de download.`
+    );
+  }
+
+  return size;
+}
+
 module.exports = async function videoDownloader(job, baseTempDir) {
   const { jobId, source } = job;
 
@@ -22,29 +38,43 @@ module.exports = async function videoDownloader(job, baseTempDir) {
     throw new Error("[VideoDownloader] source.url é obrigatório");
   }
 
-  console.log("⬇️ [VideoDownloader] Download máximo real:", source.url);
+  console.log("⬇️ [VideoDownloader] Iniciando download máximo real:", source.url);
 
   const jobDir = path.join(baseTempDir, String(jobId));
   safeMkdir(jobDir);
 
   const outputPath = path.join(jobDir, "source.%(ext)s");
 
-  const baseOptions = {
+  const opts = {
+    binaryPath: "/usr/local/bin/yt-dlp",
     output: outputPath,
 
-    // 🔥 MELHOR QUALIDADE DISPONÍVEL SEM LIMITES
+    // 🔥 FORMATO PROFISSIONAL MÁXIMO
+    // bv* = best video stream disponível
+    // ba  = best audio
+    // fallback para melhor combinado se necessário
+    format: "bv*+ba/b",
 
-format: "bestvideo+bestaudio/best",
-    // Permite qualquer container (mp4/webm/mkv)
+    // Ordena priorizando resolução, fps e bitrate
+    formatSort: [
+      "res",
+      "fps",
+      "vbr",
+      "abr",
+      "ext"
+    ],
+
     mergeOutputFormat: "mkv",
 
     noWarnings: true,
     quiet: false,
 
-    retries: 10,
-    fragmentRetries: 10,
+    retries: 15,
+    fragmentRetries: 15,
+    continue: true,
 
-    extractorArgs: "youtube:player_client=android,web",
+    // Melhor compatibilidade com YouTube
+    extractorArgs: "youtube:player_client=web",
 
     addHeader: [
       "User-Agent: Mozilla/5.0",
@@ -52,18 +82,11 @@ format: "bestvideo+bestaudio/best",
     ],
   };
 
-const opts = {
-  ...baseOptions,
-  // força o yt-dlp global instalado no Docker
-  binaryPath: "/usr/local/bin/yt-dlp",
-};
-
-
   try {
     await ytdlp(source.url, opts);
   } catch (err) {
     const files = listDir(jobDir);
-    console.error("❌ yt-dlp falhou. Arquivos:", files);
+    console.error("❌ yt-dlp falhou. Arquivos encontrados:", files);
 
     throw new Error(
       `[VideoDownloader] Falha no download: ${err?.message || err}`
@@ -71,8 +94,9 @@ const opts = {
   }
 
   const files = listDir(jobDir);
+
   const videoFile = files.find((f) =>
-    f.match(/\.(mp4|mkv|webm)$/i)
+    f.match(/\.(mkv|mp4|webm)$/i)
   );
 
   if (!videoFile) {
@@ -81,15 +105,11 @@ const opts = {
     );
   }
 
-  const size = fs.statSync(videoFile).size;
+  const size = ensureFileLooksValid(videoFile);
 
-  if (size < 500_000) {
-    throw new Error(
-      `[VideoDownloader] Vídeo muito pequeno (${size} bytes).`
-    );
-  }
-
-  console.log("✅ [VideoDownloader] Download concluído:", videoFile);
+  console.log("✅ [VideoDownloader] Download concluído com sucesso.");
+  console.log("📦 Arquivo:", videoFile);
+  console.log("📏 Tamanho:", (size / 1024 / 1024).toFixed(2), "MB");
 
   return {
     videoPath: videoFile,
