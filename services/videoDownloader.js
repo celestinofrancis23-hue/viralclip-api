@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const ytdlp = require("yt-dlp-exec");
+const { spawn } = require("child_process");
 
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
