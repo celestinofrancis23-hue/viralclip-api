@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 # Instala faster-whisper e dependências
-RUN pip3 install --no-cache-dir faster-whisper
+RUN pip3 install --no-cache-dir --break-system-packages faster-whisper
 
 WORKDIR /app
 
