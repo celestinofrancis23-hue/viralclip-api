@@ -1,4 +1,4 @@
-kFROM node:22-bookworm-slim
+FROM node:22-bookworm-slim
 
 # ===============================
 # Instala dependências do sistema
