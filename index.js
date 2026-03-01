@@ -371,6 +371,47 @@ app.post("/generate-clips", async (req, res) => {
   }
 });
 
+app.post("/test-upload-r2", async (req, res) => {
+  try {
+    const { fileUrl, fileName } = req.body;
+
+    if (!fileUrl) {
+      return res.status(400).json({ error: "fileUrl required" });
+    }
+
+    console.log("Downloading from Wix:", fileUrl);
+
+    const download = await fetch(fileUrl);
+
+    if (!download.ok) {
+      return res.status(400).json({ error: "Failed to download from Wix" });
+    }
+
+    const buffer = Buffer.from(await download.arrayBuffer());
+
+    const r2Key = `test-uploads/${Date.now()}-${fileName}`;
+
+    console.log("Uploading to R2:", r2Key);
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET,
+        Key: r2Key,
+        Body: buffer,
+        ContentType: download.headers.get("content-type") || "video/mp4"
+      })
+    );
+
+    console.log("Upload success");
+
+    res.json({ success: true, key: r2Key });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* ======================================================
    📡 GET /jobs/:jobId
 ====================================================== */
