@@ -1,27 +1,45 @@
-FROM node:22-bookworm-slim
+kFROM node:22-bookworm-slim
 
+# ===============================
 # Instala dependências do sistema
+# ===============================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
+    python3-venv \
     ffmpeg \
     ca-certificates \
     curl \
+    libgomp1 \
+    libstdc++6 \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala yt-dlp globalmente
+# Garante python3 como padrão
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# Atualiza pip
+RUN python3 -m pip install --upgrade pip
+
+# ===============================
+# Instala yt-dlp
+# ===============================
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
-# Instala faster-whisper e dependências
+# ===============================
+# Instala faster-whisper + deps
+# ===============================
 RUN pip3 install --no-cache-dir --break-system-packages faster-whisper
 
 WORKDIR /app
 
-# Instala dependências Node primeiro (cache eficiente)
+# ===============================
+# Instala dependências Node
+# ===============================
 COPY package*.json ./
 RUN npm install --ignore-scripts
 
-# Copia o resto do código
+# Copia restante do projeto
 COPY . .
 
 EXPOSE 3000
