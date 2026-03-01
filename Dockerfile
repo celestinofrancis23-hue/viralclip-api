@@ -1,11 +1,10 @@
 FROM node:22-bookworm-slim
 
 # ===============================
-# Instala dependências do sistema
+# Dependências do sistema
 # ===============================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
     python3-venv \
     ffmpeg \
     ca-certificates \
@@ -15,31 +14,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Garante python3 como padrão
-RUN ln -sf /usr/bin/python3 /usr/bin/python
+# ===============================
+# Cria ambiente virtual Python
+# ===============================
+RUN python3 -m venv /opt/venv
 
-# Atualiza pip
-RUN python3 -m pip install --upgrade pip
+# Ativa venv no PATH
+ENV PATH="/opt/venv/bin:$PATH"
 
-# ===============================
-# Instala yt-dlp
-# ===============================
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
+# Atualiza pip dentro da venv
+RUN pip install --upgrade pip
 
-# ===============================
-# Instala faster-whisper + deps
-# ===============================
-RUN pip3 install --no-cache-dir --break-system-packages faster-whisper
+# Instala yt-dlp e faster-whisper dentro da venv
+RUN pip install --no-cache-dir yt-dlp faster-whisper
 
 WORKDIR /app
 
 # ===============================
-# Instala dependências Node
+# Node dependencies
 # ===============================
 COPY package*.json ./
 RUN npm install --ignore-scripts
 
-# Copia restante do projeto
 COPY . .
 
 EXPOSE 3000
