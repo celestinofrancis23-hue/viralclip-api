@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Instala yt-dlp globalmente
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
+# Instala faster-whisper e dependências
+RUN pip3 install --no-cache-dir faster-whisper
+
 WORKDIR /app
 
 # Instala dependências Node primeiro (cache eficiente)
