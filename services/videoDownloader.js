@@ -30,6 +30,46 @@ function ensureFileLooksValid(filePath) {
   return size;
 }
 
+function runYtDlp(url, outputPath, format) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      url,
+
+      "--output", outputPath,
+      "--format", format,
+      "--merge-output-format", "mkv",
+
+      "--no-warnings",
+      "--retries", "15",
+      "--fragment-retries", "15",
+      "--extractor-args", "youtube:player_client=android",
+
+      "--add-header", "User-Agent: Mozilla/5.0",
+      "--add-header", "Accept-Language: en-US,en;q=0.9"
+    ];
+
+    console.log("🚀 Executando yt-dlp com formato:", format);
+    console.log("Args:", args.join(" "));
+
+    const proc = spawn("/usr/local/bin/yt-dlp", args);
+
+    proc.stdout.on("data", (data) => {
+      console.log(`[yt-dlp] ${data}`);
+    });
+
+    proc.stderr.on("data", (data) => {
+      console.error(`[yt-dlp error] ${data}`);
+    });
+
+    proc.on("error", (err) => reject(err));
+
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`yt-dlp exited with code ${code}`));
+    });
+  });
+}
+
 module.exports = async function videoDownloader(job, baseTempDir) {
   const { jobId, source } = job;
 
@@ -41,68 +81,33 @@ module.exports = async function videoDownloader(job, baseTempDir) {
     throw new Error("[VideoDownloader] source.url é obrigatório");
   }
 
-  console.log("⬇️ [VideoDownloader] Iniciando download máximo real:", source.url);
+  console.log("⬇️ [VideoDownloader] Iniciando download:", source.url);
 
   const jobDir = path.join(baseTempDir, String(jobId));
   safeMkdir(jobDir);
 
   const outputPath = path.join(jobDir, "source.%(ext)s");
 
+  const primaryFormat = "bestvideo+bestaudio/best";
+  const fallbackFormat = "best";
+
   try {
-    await new Promise((resolve, reject) => {
-      const args = [
-        source.url,
+    // 🔥 Tentativa principal (qualidade máxima separada)
+    await runYtDlp(source.url, outputPath, primaryFormat);
+  } catch (primaryErr) {
+    console.warn("⚠️ Formato principal falhou. Tentando fallback...");
+    try {
+      // 🔥 Fallback ultra compatível
+      await runYtDlp(source.url, outputPath, fallbackFormat);
+    } catch (fallbackErr) {
+      const files = listDir(jobDir);
+      console.error("❌ yt-dlp falhou completamente.");
+      console.error("Arquivos encontrados:", files);
 
-        "--output", outputPath,
-
-        // 🔥 MELHOR QUALIDADE DISPONÍVEL
-        "--format", "bestvideo+bestaudio/best",
-
-        "--merge-output-format", "mkv",
-
-        "--no-warnings",
-
-        "--retries", "15",
-        "--fragment-retries", "15",
-
-        "--extractor-args", "youtube:player_client=web",
-
-        "--add-header", "User-Agent: Mozilla/5.0",
-        "--add-header", "Accept-Language: en-US,en;q=0.9"
-      ];
-
-      console.log("🚀 Executando yt-dlp com args:", args.join(" "));
-
-      const proc = spawn("yt-dlp", args);
-
-      proc.stdout.on("data", (data) => {
-        console.log(`[yt-dlp] ${data}`);
-      });
-
-      proc.stderr.on("data", (data) => {
-        console.error(`[yt-dlp error] ${data}`);
-      });
-
-      proc.on("error", (err) => {
-        reject(err);
-      });
-
-      proc.on("close", (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`yt-dlp exited with code ${code}`));
-        }
-      });
-    });
-
-  } catch (err) {
-    const files = listDir(jobDir);
-    console.error("❌ yt-dlp falhou. Arquivos encontrados:", files);
-
-    throw new Error(
-      `[VideoDownloader] Falha no download: ${err?.message || err}`
-    );
+      throw new Error(
+        `[VideoDownloader] Falha total no download.\nPrimário: ${primaryErr.message}\nFallback: ${fallbackErr.message}`
+      );
+    }
   }
 
   const files = listDir(jobDir);
