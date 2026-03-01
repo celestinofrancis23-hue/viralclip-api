@@ -406,6 +406,21 @@ app.get("/jobs/:jobId", (req, res) => {
   }
 });
 
+app.get('/debug/video/:jobId', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+
+  const { jobId } = req.params;
+
+  const videoPath = `/app/temp/${jobId}/source.mp4`;
+
+  if (!fs.existsSync(videoPath)) {
+    return res.status(404).send('Video not found');
+  }
+
+  res.sendFile(videoPath);
+});
+
 const PORT = process.env.PORT || 3000;
 
 /* ======================================================
