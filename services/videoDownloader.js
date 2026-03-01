@@ -55,7 +55,7 @@ const args = [
     console.log("🚀 Executando yt-dlp com formato:", format);
     console.log("Args:", args.join(" "));
 
-    const proc = spawn("/usr/local/bin/yt-dlp", args);
+const proc = spawn("yt-dlp", args);
 
     proc.stdout.on("data", (data) => {
       console.log(`[yt-dlp] ${data}`);
