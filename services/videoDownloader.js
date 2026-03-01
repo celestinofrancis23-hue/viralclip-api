@@ -33,7 +33,10 @@ function ensureFileLooksValid(filePath) {
 module.exports = async function videoDownloader(job, baseTempDir) {
   const { jobId, source } = job;
 
-  if (!jobId) throw new Error("[VideoDownloader] jobId é obrigatório");
+  if (!jobId) {
+    throw new Error("[VideoDownloader] jobId é obrigatório");
+  }
+
   if (!source || !source.url) {
     throw new Error("[VideoDownloader] source.url é obrigatório");
   }
@@ -45,45 +48,54 @@ module.exports = async function videoDownloader(job, baseTempDir) {
 
   const outputPath = path.join(jobDir, "source.%(ext)s");
 
-  const opts = {
-    binaryPath: "/usr/local/bin/yt-dlp",
-    output: outputPath,
-
-    // 🔥 FORMATO PROFISSIONAL MÁXIMO
-    // bv* = best video stream disponível
-    // ba  = best audio
-    // fallback para melhor combinado se necessário
-    format: "bv*+ba/b",
-
-    // Ordena priorizando resolução, fps e bitrate
-    formatSort: [
-      "res",
-      "fps",
-      "vbr",
-      "abr",
-      "ext"
-    ],
-
-    mergeOutputFormat: "mkv",
-
-    noWarnings: true,
-    quiet: false,
-
-    retries: 15,
-    fragmentRetries: 15,
-    continue: true,
-
-    // Melhor compatibilidade com YouTube
-    extractorArgs: "youtube:player_client=web",
-
-    addHeader: [
-      "User-Agent: Mozilla/5.0",
-      "Accept-Language: en-US,en;q=0.9",
-    ],
-  };
-
   try {
-    await ytdlp(source.url, opts);
+    await new Promise((resolve, reject) => {
+      const args = [
+        source.url,
+
+        "--output", outputPath,
+
+        // 🔥 MELHOR QUALIDADE DISPONÍVEL
+        "--format", "bv*+ba/b",
+
+        "--merge-output-format", "mkv",
+
+        "--no-warnings",
+
+        "--retries", "15",
+        "--fragment-retries", "15",
+
+        "--extractor-args", "youtube:player_client=web",
+
+        "--add-header", "User-Agent: Mozilla/5.0",
+        "--add-header", "Accept-Language: en-US,en;q=0.9"
+      ];
+
+      console.log("🚀 Executando yt-dlp com args:", args.join(" "));
+
+      const proc = spawn("yt-dlp", args);
+
+      proc.stdout.on("data", (data) => {
+        console.log(`[yt-dlp] ${data}`);
+      });
+
+      proc.stderr.on("data", (data) => {
+        console.error(`[yt-dlp error] ${data}`);
+      });
+
+      proc.on("error", (err) => {
+        reject(err);
+      });
+
+      proc.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}`));
+        }
+      });
+    });
+
   } catch (err) {
     const files = listDir(jobDir);
     console.error("❌ yt-dlp falhou. Arquivos encontrados:", files);
