@@ -56,7 +56,7 @@ module.exports = async function videoDownloader(job, baseTempDir) {
         "--output", outputPath,
 
         // 🔥 MELHOR QUALIDADE DISPONÍVEL
-        "--format", "bv*+ba/b",
+        "--format", "bestvideo+bestaudio/best",
 
         "--merge-output-format", "mkv",
 
