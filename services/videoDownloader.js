@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
+const COOKIES_PATH = "/app/cookies.txt";
+
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -32,21 +34,23 @@ function ensureFileLooksValid(filePath) {
 
 function runYtDlp(url, outputPath, format) {
   return new Promise((resolve, reject) => {
-    const args = [
-      url,
+const args = [
+  "--cookies", COOKIES_PATH,
 
-      "--output", outputPath,
-      "--format", format,
-      "--merge-output-format", "mkv",
+  url,
 
-      "--no-warnings",
-      "--retries", "15",
-      "--fragment-retries", "15",
-      "--extractor-args", "youtube:player_client=android",
+  "--output", outputPath,
+  "--format", format,
+  "--merge-output-format", "mkv",
 
-      "--add-header", "User-Agent: Mozilla/5.0",
-      "--add-header", "Accept-Language: en-US,en;q=0.9"
-    ];
+  "--no-warnings",
+  "--retries", "15",
+  "--fragment-retries", "15",
+  "--extractor-args", "youtube:player_client=android",
+
+  "--add-header", "User-Agent: Mozilla/5.0",
+  "--add-header", "Accept-Language: en-US,en;q=0.9"
+];
 
     console.log("🚀 Executando yt-dlp com formato:", format);
     console.log("Args:", args.join(" "));
