@@ -6,7 +6,7 @@ const cors = require("cors");
 const path = require("path");
 const BASE_TEMP_DIR = path.join(__dirname, "temp");
 const multer = require("multer");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+onst upload = multer({ storage: multer.memoryStorage() });
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -338,6 +338,66 @@ async function processJobPipeline(job, jobDir) {
   }
 }
 
+// ===============================
+// R2 CLIENT CONFIG
+// ===============================
+const r2 = new S3Client({
+  region: process.env.R2_REGION || "auto",
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
+
+
+// ===============================
+// CONTENT TYPE DETECTOR
+// ===============================
+function detectContentType(fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+
+  const map = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+  };
+
+  return map[extension] || "application/octet-stream";
+}
+
+app.post("/upload-direct", upload.single("video"), async (req, res) => {
+
+  try {
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file received" });
+    }
+
+    const key = await uploadBufferToR2(
+      req.file.buffer,
+      req.file.originalname,
+      "public"
+    );
+
+    return res.json({
+      success: true,
+      key
+    });
+
+  } catch (err) {
+
+    console.error("UPLOAD ERROR:", err);
+
+    return res.status(500).json({
+      error: "R2 upload failed"
+    });
+  }
+});
+
 /* ======================================================
    📡 POST /generate-clips
    RESPONDE IMEDIATAMENTE
@@ -374,42 +434,6 @@ app.post("/generate-clips", async (req, res) => {
     return res.status(400).json({
       success: false,
       error: err.message,
-    });
-  }
-});
-
-app.post("/upload-direct", upload.single("video"), async (req, res) => {
-
-  try {
-
-    if (!req.file) {
-      return res.status(400).json({ error: "No file received" });
-    }
-
-    const file = req.file;
-
-    const key = `uploads/${Date.now()}-${file.originalname}`;
-
-    await s3.send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,  // 👈 AJUSTADO
-      Key: key,
-      Body: file.buffer,
-      ContentType: file.mimetype
-    }));
-
-    const publicUrl = `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`;
-
-    return res.json({
-      success: true,
-      url: publicUrl
-    });
-
-  } catch (err) {
-
-    console.error("UPLOAD ERROR:", err);
-
-    return res.status(500).json({
-      error: "R2 upload failed"
     });
   }
 });
