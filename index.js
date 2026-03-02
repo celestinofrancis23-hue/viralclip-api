@@ -336,36 +336,6 @@ async function processJobPipeline(job, jobDir) {
   }
 }
 
-// ===============================
-// R2 CLIENT CONFIG
-// ===============================
-const r2 = new S3Client({
-  region: process.env.R2_REGION || "auto",
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
-
-
-// ===============================
-// CONTENT TYPE DETECTOR
-// ===============================
-function detectContentType(fileName) {
-  const extension = path.extname(fileName).toLowerCase();
-
-  const map = {
-    ".mp4": "video/mp4",
-    ".mov": "video/quicktime",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-  };
-
-  return map[extension] || "application/octet-stream";
-}
 
 app.post("/upload-direct", upload.single("video"), async (req, res) => {
 
