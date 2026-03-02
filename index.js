@@ -6,8 +6,6 @@ const cors = require("cors");
 const path = require("path");
 const BASE_TEMP_DIR = path.join(__dirname, "temp");
 const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
-
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
