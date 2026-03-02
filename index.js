@@ -378,7 +378,6 @@ app.post("/generate-clips", async (req, res) => {
   }
 });
 
-
 app.post("/upload-direct", upload.single("video"), async (req, res) => {
 
   try {
@@ -392,13 +391,13 @@ app.post("/upload-direct", upload.single("video"), async (req, res) => {
     const key = `uploads/${Date.now()}-${file.originalname}`;
 
     await s3.send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET,
+      Bucket: process.env.R2_BUCKET_NAME,  // 👈 AJUSTADO
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype
     }));
 
-    const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
+    const publicUrl = `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`;
 
     return res.json({
       success: true,
@@ -414,6 +413,7 @@ app.post("/upload-direct", upload.single("video"), async (req, res) => {
     });
   }
 });
+
 
 /* ======================================================
    📡 GET /jobs/:jobId
