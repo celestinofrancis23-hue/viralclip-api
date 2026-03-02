@@ -336,7 +336,6 @@ async function processJobPipeline(job, jobDir) {
   }
 }
 
-
 app.post("/upload-direct", upload.single("video"), async (req, res) => {
 
   try {
@@ -345,25 +344,21 @@ app.post("/upload-direct", upload.single("video"), async (req, res) => {
       return res.status(400).json({ error: "No file received" });
     }
 
-    const key = await uploadBufferToR2(
-      req.file.buffer,
-      req.file.originalname,
-      "public"
+    const key = await uploadToR2(
+      req.file,
+      "test-user",
+      Date.now()
     );
 
-    return res.json({
-      success: true,
-      key
-    });
+    res.json({ success: true, key });
 
-  } catch (err) {
+  } catch (error) {
 
-    console.error("UPLOAD ERROR:", err);
+    console.error("UPLOAD ERROR:", error);
+    res.status(500).json({ error: "R2 upload failed", details: error.message });
 
-    return res.status(500).json({
-      error: "R2 upload failed"
-    });
   }
+
 });
 
 /* ======================================================

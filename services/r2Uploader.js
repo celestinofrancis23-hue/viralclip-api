@@ -1,6 +1,3 @@
-
-const fs = require("fs");
-const path = require("path");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
 const r2 = new S3Client({
@@ -12,38 +9,27 @@ const r2 = new S3Client({
   },
 });
 
-async function uploadToR2(localFilePath, userId, jobId) {
-  if (!fs.existsSync(localFilePath)) {
-    throw new Error("Arquivo não encontrado: " + localFilePath);
+async function uploadToR2(file, userId, jobId) {
+
+  if (!file || !file.buffer) {
+    throw new Error("Invalid file buffer");
   }
 
-  const fileName = path.basename(localFilePath);
-  const extension = path.extname(fileName).toLowerCase();
+  const extension = file.originalname.split(".").pop().toLowerCase();
 
-  console.log("UPLOAD DEBUG:", { userId, jobId, fileName });
+  const key = `clips/${userId}/${jobId}.${extension}`;
 
-  const key = `clips/${userId}/${jobId}/${fileName}`;
-
-  // 🔥 Detectar ContentType corretamente
-  let contentType = "application/octet-stream";
-
-  if (extension === ".mp4") {
-    contentType = "video/mp4";
-  }
-
-  if (extension === ".jpg" || extension === ".jpeg") {
-    contentType = "image/jpeg";
-  }
-
-  if (extension === ".png") {
-    contentType = "image/png";
-  }
+  console.log("UPLOAD DEBUG:", {
+    userId,
+    jobId,
+    fileName: file.originalname
+  });
 
   const command = new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
-    Body: fs.createReadStream(localFilePath),
-    ContentType: contentType,
+    Body: file.buffer,
+    ContentType: file.mimetype
   });
 
   await r2.send(command);
