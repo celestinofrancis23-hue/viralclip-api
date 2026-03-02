@@ -6,7 +6,7 @@ const cors = require("cors");
 const path = require("path");
 const BASE_TEMP_DIR = path.join(__dirname, "temp");
 const multer = require("multer");
-onst upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage() });
 
 const upload = multer({
   storage: multer.memoryStorage(),
