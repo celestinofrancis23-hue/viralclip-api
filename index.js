@@ -5,6 +5,13 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const BASE_TEMP_DIR = path.join(__dirname, "temp");
+const multer = require("multer");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
+});
 
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -371,44 +378,40 @@ app.post("/generate-clips", async (req, res) => {
   }
 });
 
-app.post("/test-upload-r2", async (req, res) => {
+
+app.post("/upload-direct", upload.single("video"), async (req, res) => {
+
   try {
-    const { fileUrl, fileName } = req.body;
 
-    if (!fileUrl) {
-      return res.status(400).json({ error: "fileUrl required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "No file received" });
     }
 
-    console.log("Downloading from Wix:", fileUrl);
+    const file = req.file;
 
-    const download = await fetch(fileUrl);
+    const key = `uploads/${Date.now()}-${file.originalname}`;
 
-    if (!download.ok) {
-      return res.status(400).json({ error: "Failed to download from Wix" });
-    }
+    await s3.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype
+    }));
 
-    const buffer = Buffer.from(await download.arrayBuffer());
+    const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-    const r2Key = `test-uploads/${Date.now()}-${fileName}`;
-
-    console.log("Uploading to R2:", r2Key);
-
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET,
-        Key: r2Key,
-        Body: buffer,
-        ContentType: download.headers.get("content-type") || "video/mp4"
-      })
-    );
-
-    console.log("Upload success");
-
-    res.json({ success: true, key: r2Key });
+    return res.json({
+      success: true,
+      url: publicUrl
+    });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+
+    console.error("UPLOAD ERROR:", err);
+
+    return res.status(500).json({
+      error: "R2 upload failed"
+    });
   }
 });
 
