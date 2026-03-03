@@ -1,5 +1,6 @@
 // index.js (CommonJS)
 require("dotenv").config();
+const fetch = require("node-fetch");
 const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
@@ -336,26 +337,58 @@ async function processJobPipeline(job, jobDir) {
   }
 }
 
-app.post("/upload-direct", upload.single("video"), async (req, res) => {
+// ===============================
+// UPLOAD FROM WIX → SAVE TO R2
+// ===============================
+app.post("/upload-from-wix", async (req, res) => {
 
   try {
 
-    if (!req.file) {
-      return res.status(400).json({ error: "No file received" });
+    const { videoUrl } = req.body;
+
+    if (!videoUrl) {
+      return res.status(400).json({
+        error: "Missing videoUrl"
+      });
     }
 
-    const key = await uploadToR2(
-      req.file,
-      "test-user",
-      Date.now()
-    );
+    console.log("Downloading from Wix:", videoUrl);
 
-    res.json({ success: true, key });
+    // 1️⃣ Baixar vídeo do Wix
+    const wixResponse = await fetch(videoUrl);
 
-  } catch (error) {
+    if (!wixResponse.ok) {
+      throw new Error("Failed to download from Wix");
+    }
 
-    console.error("UPLOAD ERROR:", error);
-    res.status(500).json({ error: "R2 upload failed", details: error.message });
+    const arrayBuffer = await wixResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // 2️⃣ Gerar nome único
+    const fileKey = `uploads/${Date.now()}_video.mp4`;
+
+    // 3️⃣ Enviar para R2 usando suas variáveis
+    await r2.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: fileKey,
+      Body: buffer,
+      ContentType: "video/mp4"
+    }));
+
+    console.log("Saved to R2:", fileKey);
+
+    return res.json({
+      success: true,
+      key: fileKey
+    });
+
+  } catch (err) {
+
+    console.error("Upload-from-wix error:", err);
+
+    return res.status(500).json({
+      error: err.message
+    });
 
   }
 
