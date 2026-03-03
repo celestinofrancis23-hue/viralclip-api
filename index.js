@@ -1,6 +1,5 @@
 // index.js (CommonJS)
 require("dotenv").config();
-const fetch = require("node-fetch");
 const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
