@@ -11,6 +11,8 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
 
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
