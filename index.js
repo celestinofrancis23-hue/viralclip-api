@@ -337,60 +337,51 @@ async function processJobPipeline(job, jobDir) {
 }
 
 // ===============================
-// UPLOAD FROM WIX → SAVE TO R2
+// R2 UPLOAD ENDPOINT (/upload)
 // ===============================
-app.post("/upload-from-wix", async (req, res) => {
 
+const r2 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
+
+app.post("/upload", upload.single("video"), async (req, res) => {
   try {
-
-    const { videoUrl } = req.body;
-
-    if (!videoUrl) {
-      return res.status(400).json({
-        error: "Missing videoUrl"
-      });
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: "No file received (field: video)" });
     }
 
-    console.log("Downloading from Wix:", videoUrl);
-
-    // 1️⃣ Baixar vídeo do Wix
-    const wixResponse = await fetch(videoUrl);
-
-    if (!wixResponse.ok) {
-      throw new Error("Failed to download from Wix");
+    if (!process.env.R2_BUCKET_NAME) {
+      return res.status(500).json({ ok: false, error: "Missing env: R2_BUCKET_NAME" });
     }
 
-    const arrayBuffer = await wixResponse.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const file = req.file;
 
-    // 2️⃣ Gerar nome único
-    const fileKey = `uploads/${Date.now()}_video.mp4`;
+    const safeName = String(file.originalname || "upload.bin")
+      .replace(/[^\w.\-]+/g, "_");
 
-    // 3️⃣ Enviar para R2 usando suas variáveis
-    await r2.send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: fileKey,
-      Body: buffer,
-      ContentType: "video/mp4"
-    }));
+    const key = `uploads/${Date.now()}-${safeName}`;
 
-    console.log("Saved to R2:", fileKey);
+    await r2.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME, // ✅ seu env é R2_BUCKET_NAME
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype || "application/octet-stream",
+      })
+    );
 
-    return res.json({
-      success: true,
-      key: fileKey
-    });
+    console.log("[UPLOAD] OK:", { key, size: file.size, type: file.mimetype });
 
+    return res.json({ ok: true, key });
   } catch (err) {
-
-    console.error("Upload-from-wix error:", err);
-
-    return res.status(500).json({
-      error: err.message
-    });
-
+    console.error("[UPLOAD] ERROR:", err);
+    return res.status(500).json({ ok: false, error: err.message || "Upload failed" });
   }
-
 });
 
 /* ======================================================
