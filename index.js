@@ -353,36 +353,67 @@ const r2 = new S3Client({
 
 app.post("/upload", upload.single("video"), async (req, res) => {
   try {
+
     if (!req.file) {
-      return res.status(400).json({ ok: false, error: "No file received (field: video)" });
+      return res.status(400).json({
+        ok: false,
+        error: "No file received (field: video)"
+      });
     }
 
     if (!process.env.R2_BUCKET_NAME) {
-      return res.status(500).json({ ok: false, error: "Missing env: R2_BUCKET_NAME" });
+      return res.status(500).json({
+        ok: false,
+        error: "Missing env: R2_BUCKET_NAME"
+      });
     }
 
     const file = req.file;
 
-    const safeName = String(file.originalname || "upload.bin")
-      .replace(/[^\w.\-]+/g, "_");
+    if (!file.mimetype.startsWith("video/")) {
+      return res.status(400).json({
+        ok: false,
+        error: "Invalid file type. Only video allowed"
+      });
+    }
 
-    const key = `uploads/${Date.now()}-${safeName}`;
+    const userId = req.body.userId;
+    const jobId = req.body.jobId;
+
+    if (!userId || !jobId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing userId or jobId"
+      });
+    }
+
+    const key = `uploads/${userId}/${jobId}/source.mp4`;
 
     await r2.send(
       new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME, // ✅ seu env é R2_BUCKET_NAME
+        Bucket: process.env.R2_BUCKET_NAME,
         Key: key,
         Body: file.buffer,
-        ContentType: file.mimetype || "application/octet-stream",
+        ContentType: file.mimetype ?? "video/mp4",
       })
     );
 
-    console.log("[UPLOAD] OK:", { key, size: file.size, type: file.mimetype });
+    console.log("[UPLOAD SUCCESS]", {
+      key,
+      userId,
+      jobId,
+      sizeMB: (file.size / 1024 / 1024).toFixed(2),
+      type: file.mimetype
+    });
 
     return res.json({ ok: true, key });
+
   } catch (err) {
-    console.error("[UPLOAD] ERROR:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Upload failed" });
+    console.error("[UPLOAD ERROR]", err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Upload failed"
+    });
   }
 });
 
