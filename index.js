@@ -32,6 +32,7 @@ const CaptionMerge = require("./services/captionMerge");
 const CaptionEngine = require("./services/captionEngine");
 const uploadToR2 = require("./services/r2Uploader");
 const ClipThumbnailWorker = require("./workers/ClipThumbnailWorker");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner")
 
 const app = express();
 app.use(cors({
@@ -415,6 +416,98 @@ app.post("/upload", upload.single("video"), async (req, res) => {
       error: err.message || "Upload failed"
     });
   }
+});
+
+// ===============================
+// GENERATE SIGNED UPLOAD URL (R2)
+// ===============================
+app.post("/upload-url", async (req, res) => {
+
+  try {
+
+    const { userId, jobId } = req.body || {};
+
+    // -------------------------
+    // Validate payload
+    // -------------------------
+    if (!userId || !jobId) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing userId or jobId"
+      });
+    }
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (!uuidRegex.test(userId)) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid userId format"
+      });
+    }
+
+    if (!uuidRegex.test(jobId)) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid jobId format"
+      });
+    }
+
+    // -------------------------
+    // Validate env
+    // -------------------------
+    const bucket = process.env.R2_BUCKET_NAME;
+
+    if (!bucket) {
+      console.error("❌ Missing env R2_BUCKET_NAME");
+
+      return res.status(500).json({
+        ok: false,
+        error: "server configuration error"
+      });
+    }
+
+    // -------------------------
+    // Build object key
+    // -------------------------
+    const key = `uploads/${userId}/${jobId}/source.mp4`;
+
+    // -------------------------
+    // Create signed upload command
+    // -------------------------
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: "video/mp4"
+    });
+
+    // -------------------------
+    // Generate signed URL
+    // -------------------------
+    const uploadUrl = await getSignedUrl(r2, command, {
+      expiresIn: 600 // 10 minutes
+    });
+
+    console.log("✅ Signed upload URL generated:", key);
+
+    return res.status(200).json({
+      ok: true,
+      uploadUrl,
+      key
+    });
+
+  } catch (err) {
+
+    console.error("❌ upload-url endpoint error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      error: "failed to generate upload url"
+    });
+
+  }
+
 });
 
 /* ======================================================
