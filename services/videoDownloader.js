@@ -4,6 +4,8 @@ const { spawn } = require("child_process");
 
 const COOKIES_PATH = "/app/cookies.txt";
 
+const R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL;
+
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -25,7 +27,7 @@ function ensureFileLooksValid(filePath) {
 
   if (size < 1_000_000) {
     throw new Error(
-      `[VideoDownloader] Arquivo muito pequeno (${size} bytes). Possível falha de download.`
+      `[VideoDownloader] Arquivo muito pequeno (${size} bytes).`
     );
   }
 
@@ -34,106 +36,149 @@ function ensureFileLooksValid(filePath) {
 
 function runYtDlp(url, outputPath, format) {
   return new Promise((resolve, reject) => {
-const args = [
-  "--cookies", COOKIES_PATH,
 
-  url,
+    const args = [
+      "--cookies", COOKIES_PATH,
+      url,
+      "--output", outputPath,
+      "--format", format,
+      "--merge-output-format", "mkv",
+      "--no-warnings",
+      "--retries", "15",
+      "--fragment-retries", "15",
+      "--extractor-args", "youtube:player_client=android",
+      "--add-header", "User-Agent: Mozilla/5.0",
+      "--add-header", "Accept-Language: en-US,en;q=0.9"
+    ];
 
-  "--output", outputPath,
-  "--format", format,
-  "--merge-output-format", "mkv",
+    console.log("🚀 yt-dlp:", args.join(" "));
 
-  "--no-warnings",
-  "--retries", "15",
-  "--fragment-retries", "15",
-  "--extractor-args", "youtube:player_client=android",
+    const proc = spawn("yt-dlp", args);
 
-  "--add-header", "User-Agent: Mozilla/5.0",
-  "--add-header", "Accept-Language: en-US,en;q=0.9"
-];
+    proc.stdout.on("data", (d) => console.log(`[yt-dlp] ${d}`));
+    proc.stderr.on("data", (d) => console.error(`[yt-dlp error] ${d}`));
 
-    console.log("🚀 Executando yt-dlp com formato:", format);
-    console.log("Args:", args.join(" "));
-
-const proc = spawn("yt-dlp", args);
-
-    proc.stdout.on("data", (data) => {
-      console.log(`[yt-dlp] ${data}`);
-    });
-
-    proc.stderr.on("data", (data) => {
-      console.error(`[yt-dlp error] ${data}`);
-    });
-
-    proc.on("error", (err) => reject(err));
+    proc.on("error", reject);
 
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`yt-dlp exited with code ${code}`));
+      else reject(new Error(`yt-dlp exited with ${code}`));
     });
   });
 }
 
+// 🔥 DOWNLOAD DO R2 (UPLOAD FLOW)
+async function downloadFromR2(key, outputPath) {
+
+  if (!R2_PUBLIC_BASE_URL) {
+    throw new Error("R2_PUBLIC_BASE_URL não definido no .env");
+  }
+
+  const url = `${R2_PUBLIC_BASE_URL}/${key}`;
+
+  console.log("⬇️ [R2] Download:", url);
+
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    throw new Error(`[R2] Falha download: ${res.status}`);
+  }
+
+  const fileStream = fs.createWriteStream(outputPath);
+
+  await new Promise((resolve, reject) => {
+    res.body.pipe(fileStream);
+    res.body.on("error", reject);
+    fileStream.on("finish", resolve);
+  });
+
+  console.log("✅ [R2] Download concluído:", outputPath);
+}
+
+// ===============================
+// MAIN EXPORT
+// ===============================
 module.exports = async function videoDownloader(job, baseTempDir) {
+
   const { jobId, source } = job;
 
   if (!jobId) {
-    throw new Error("[VideoDownloader] jobId é obrigatório");
+    throw new Error("[VideoDownloader] jobId obrigatório");
   }
 
-  if (!source || !source.url) {
-    throw new Error("[VideoDownloader] source.url é obrigatório");
+  if (!source || !source.type) {
+    throw new Error("[VideoDownloader] source.type obrigatório");
   }
-
-  console.log("⬇️ [VideoDownloader] Iniciando download:", source.url);
 
   const jobDir = path.join(baseTempDir, String(jobId));
   safeMkdir(jobDir);
 
-  const outputPath = path.join(jobDir, "source.%(ext)s");
+  const finalPath = path.join(jobDir, "source.mp4");
 
-  const primaryFormat = "bestvideo+bestaudio/best";
-  const fallbackFormat = "best";
+  // ====================================
+  // 🔥 CASE 1 — YOUTUBE
+  // ====================================
+  if (source.type === "youtube") {
 
-  try {
-    // 🔥 Tentativa principal (qualidade máxima separada)
-    await runYtDlp(source.url, outputPath, primaryFormat);
-  } catch (primaryErr) {
-    console.warn("⚠️ Formato principal falhou. Tentando fallback...");
-    try {
-      // 🔥 Fallback ultra compatível
-      await runYtDlp(source.url, outputPath, fallbackFormat);
-    } catch (fallbackErr) {
-      const files = listDir(jobDir);
-      console.error("❌ yt-dlp falhou completamente.");
-      console.error("Arquivos encontrados:", files);
-
-      throw new Error(
-        `[VideoDownloader] Falha total no download.\nPrimário: ${primaryErr.message}\nFallback: ${fallbackErr.message}`
-      );
+    if (!source.url) {
+      throw new Error("[VideoDownloader] source.url obrigatório");
     }
-  }
 
-  const files = listDir(jobDir);
+    console.log("⬇️ YouTube download:", source.url);
 
-  const videoFile = files.find((f) =>
-    f.match(/\.(mkv|mp4|webm)$/i)
-  );
+    const outputPath = path.join(jobDir, "source.%(ext)s");
 
-  if (!videoFile) {
-    throw new Error(
-      `[VideoDownloader] Nenhum vídeo gerado.\nArquivos:\n- ${files.join("\n- ")}`
+    const primaryFormat = "bestvideo+bestaudio/best";
+    const fallbackFormat = "best";
+
+    try {
+      await runYtDlp(source.url, outputPath, primaryFormat);
+    } catch (err) {
+      console.warn("⚠️ fallback yt-dlp...");
+      await runYtDlp(source.url, outputPath, fallbackFormat);
+    }
+
+    const files = listDir(jobDir);
+
+    const videoFile = files.find((f) =>
+      f.match(/\.(mkv|mp4|webm)$/i)
     );
+
+    if (!videoFile) {
+      throw new Error("[VideoDownloader] Nenhum vídeo gerado");
+    }
+
+    const size = ensureFileLooksValid(videoFile);
+
+    console.log("✅ YouTube download OK:", videoFile);
+
+    return {
+      videoPath: videoFile,
+      jobDir,
+    };
   }
 
-  const size = ensureFileLooksValid(videoFile);
+  // ====================================
+  // 🔥 CASE 2 — UPLOAD (R2)
+  // ====================================
+  if (source.type === "upload") {
 
-  console.log("✅ [VideoDownloader] Download concluído com sucesso.");
-  console.log("📦 Arquivo:", videoFile);
-  console.log("📏 Tamanho:", (size / 1024 / 1024).toFixed(2), "MB");
+    if (!source.key) {
+      throw new Error("[VideoDownloader] source.key obrigatório");
+    }
 
-  return {
-    videoPath: videoFile,
-    jobDir,
-  };
+    await downloadFromR2(source.key, finalPath);
+
+    const size = ensureFileLooksValid(finalPath);
+
+    console.log("✅ Upload video ready:", finalPath);
+    console.log("📏 Size:", (size / 1024 / 1024).toFixed(2), "MB");
+
+    return {
+      videoPath: finalPath,
+      jobDir,
+    };
+  }
+
+  throw new Error(`[VideoDownloader] source.type inválido: ${source.type}`);
 };
