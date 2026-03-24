@@ -22,24 +22,19 @@ module.exports = async function audioTranscriber({
 }) {
   return new Promise((resolve, reject) => {
     try {
-      // ============================
-      // 1. Validação
-      // ============================
       if (!audioPath) {
         throw new Error("[AudioTranscriber] audioPath não informado");
       }
 
       if (!fs.existsSync(audioPath)) {
-        throw new Error(
-          "[AudioTranscriber] Arquivo de áudio não encontrado: " + audioPath
-        );
+        throw new Error("[AudioTranscriber] Arquivo de áudio não encontrado: " + audioPath);
       }
 
       if (!fs.existsSync(jobDir)) {
         fs.mkdirSync(jobDir, { recursive: true });
       }
 
-      console.log("🎧 [AudioTranscriber] Iniciando transcrição (FASTER-WHISPER)...");
+      console.log("🎧 [AudioTranscriber] Iniciando transcrição...");
       console.log("🎵 Áudio:", audioPath);
 
       const baseName = path.basename(audioPath, path.extname(audioPath));
@@ -47,88 +42,71 @@ module.exports = async function audioTranscriber({
 
       const pythonBinary = resolvePythonBinary();
 
-      // ============================
-      // 2. Script Python
-      // ============================
+      // 🔥 PYTHON CORRIGIDO
       const pythonCode = `
 from faster_whisper import WhisperModel
 import json
-import math
-import wave
-import contextlib
+import sys
 
-def audio_duration(path):
-    with contextlib.closing(wave.open(path,'r')) as f:
-        frames = f.getnframes()
-        rate = f.getframerate()
-        return frames / float(rate)
+try:
+    model = WhisperModel("small", device="cpu", compute_type="int8")
 
-duration = audio_duration(r"${audioPath}")
-estimated_segments = max(1, math.ceil(duration / 2))
+    segments, info = model.transcribe(
+        r"${audioPath}",
+        task="transcribe"
+    )
 
-model = WhisperModel(
-    "small",
-    device="auto",
-    compute_type="int8"
-)
+    output = {
+        "language": info.language,
+        "segments": []
+    }
 
-segments, info = model.transcribe(
-    r"${audioPath}",
-    task="transcribe",
-    word_timestamps=False
-)
+    for seg in segments:
+        output["segments"].append({
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text
+        })
 
-output = {
-    "language": info.language,
-    "segments": []
-}
+    with open(r"${transcriptPath}", "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
 
-for seg in segments:
-    output["segments"].append({
-        "start": seg.start,
-        "end": seg.end,
-        "text": seg.text
-    })
+    print("TRANSCRIPTION_OK")
 
-with open(r"${transcriptPath}", "w", encoding="utf-8") as f:
-    json.dump(output, f, ensure_ascii=False, indent=2)
+except Exception as e:
+    print("ERROR:", str(e))
+    sys.exit(1)
 `;
 
-      // ============================
-      // 3. Spawn com ambiente correto
-      // ============================
-      const whisperProcess = spawn(pythonBinary, ["-c", pythonCode], {
+      const proc = spawn(pythonBinary, ["-c", pythonCode], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      whisperProcess.stderr.on("data", (data) => {
-        console.error("⚠️ [Faster-Whisper]", data.toString().trim());
+      // 🔥 DEBUG COMPLETO
+      proc.stdout.on("data", (data) => {
+        console.log("[WHISPER STDOUT]", data.toString());
       });
 
-      whisperProcess.on("error", (err) => {
-        reject(
-          new Error(
-            "[AudioTranscriber] Erro ao iniciar Faster-Whisper: " + err.message
-          )
-        );
+      proc.stderr.on("data", (data) => {
+        console.error("[WHISPER STDERR]", data.toString());
       });
 
-      whisperProcess.on("close", (code) => {
+      proc.on("error", (err) => {
+        reject(new Error("[AudioTranscriber] Falha ao iniciar Python: " + err.message));
+      });
+
+      proc.on("close", (code) => {
+        console.log("🐍 Whisper exit code:", code);
+
         if (code !== 0) {
           return reject(
-            new Error(
-              "[AudioTranscriber] Faster-Whisper finalizou com erro. Código: " +
-                code
-            )
+            new Error("[AudioTranscriber] Whisper falhou com código: " + code)
           );
         }
 
         if (!fs.existsSync(transcriptPath)) {
           return reject(
-            new Error(
-              "[AudioTranscriber] Transcript JSON não encontrado: " +
-                transcriptPath
-            )
+            new Error("[AudioTranscriber] Transcript não foi gerado")
           );
         }
 
@@ -136,26 +114,13 @@ with open(r"${transcriptPath}", "w", encoding="utf-8") as f:
           fs.readFileSync(transcriptPath, "utf-8")
         );
 
-        if (Array.isArray(transcript.segments)) {
-          console.log("\n📝 Transcrição:");
-          transcript.segments.forEach((seg) => {
-            const start = seg.start.toFixed(2);
-            const end = seg.end.toFixed(2);
-            const text = seg.text.trim();
-            if (text) {
-              console.log(`[${start} → ${end}] ${text}`);
-            }
-          });
-          console.log("🧾 Fim da transcrição\n");
-        }
-
-        console.log("✅ [AudioTranscriber] Transcrição concluída");
-        console.log("📄 Transcript:", transcriptPath);
+        console.log("✅ Transcrição concluída");
 
         resolve({
           transcriptPath,
         });
       });
+
     } catch (err) {
       reject(err);
     }
