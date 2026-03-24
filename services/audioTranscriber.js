@@ -43,17 +43,33 @@ module.exports = async function audioTranscriber({
       const pythonBinary = resolvePythonBinary();
 
       // 🔥 PYTHON CORRIGIDO
-      const pythonCode = `
+const pythonCode = `
 from faster_whisper import WhisperModel
 import json
-import sys
+import math
+import wave
+import contextlib
+
+def audio_duration(path):
+    with contextlib.closing(wave.open(path,'r')) as f:
+        frames = f.getnframes()
+        rate = f.getframerate()
+        return frames / float(rate)
 
 try:
-model = WhisperModel("base", device="cpu", compute_type="int8")
+    duration = audio_duration(r"${audioPath}")
+    estimated_segments = max(1, math.ceil(duration / 2))
+
+    model = WhisperModel(
+        "base",
+        device="cpu",
+        compute_type="int8"
+    )
 
     segments, info = model.transcribe(
         r"${audioPath}",
-        task="transcribe"
+        task="transcribe",
+        word_timestamps=False
     )
 
     output = {
@@ -71,11 +87,9 @@ model = WhisperModel("base", device="cpu", compute_type="int8")
     with open(r"${transcriptPath}", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print("TRANSCRIPTION_OK")
-
 except Exception as e:
-    print("ERROR:", str(e))
-    sys.exit(1)
+    print("WHISPER_ERROR:", str(e))
+    exit(1)
 `;
 
       const proc = spawn(pythonBinary, ["-c", pythonCode], {
