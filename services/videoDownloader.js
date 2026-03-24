@@ -84,13 +84,10 @@ async function downloadFromR2(key, outputPath) {
     throw new Error(`[R2] Falha download: ${res.status}`);
   }
 
-  const fileStream = fs.createWriteStream(outputPath);
+const arrayBuffer = await res.arrayBuffer();
+const buffer = Buffer.from(arrayBuffer);
 
-  await new Promise((resolve, reject) => {
-    res.body.pipe(fileStream);
-    res.body.on("error", reject);
-    fileStream.on("finish", resolve);
-  });
+fs.writeFileSync(outputPath, buffer);
 
   console.log("✅ [R2] Download concluído:", outputPath);
 }
