@@ -60,44 +60,42 @@ module.exports = function VerticalRenderWorker({
         // 2. CROP SEGURO
         // ───────────────────────────────
 
-        const targetHeight = videoHeight;
-        let targetWidth = Math.round((targetHeight * 9) / 16);
+// proporção vertical 9:16
+let targetWidth = Math.floor(videoWidth * 0.4);
+let targetHeight = Math.floor((targetWidth * 16) / 9);
 
-        if (targetWidth > videoWidth) {
-          targetWidth = videoWidth;
-        }
+// se estourar altura → ajusta
+if (targetHeight > videoHeight) {
+  targetHeight = videoHeight;
+  targetWidth = Math.floor((targetHeight * 9) / 16);
+}
 
-        let cropX;
+// posição X
+let cropX;
 
-        if (
-          crop &&
-          typeof crop.x === "number" &&
-          typeof crop.width === "number" &&
-          !isNaN(crop.x) &&
-          !isNaN(crop.width)
-        ) {
-          cropX = Math.round(crop.x + crop.width / 2 - targetWidth / 2);
-        } else {
-          // fallback centro
-          cropX = Math.round((videoWidth - targetWidth) / 2);
-        }
+if (crop && typeof crop.x === "number" && typeof crop.width === "number") {
+  cropX = Math.round(crop.x + crop.width / 2 - targetWidth / 2);
+} else {
+  cropX = Math.round((videoWidth - targetWidth) / 2);
+}
 
-        // clamp seguro
-        cropX = Math.max(0, cropX);
-        if (cropX + targetWidth > videoWidth) {
-          cropX = videoWidth - targetWidth;
-        }
+// clamp
+cropX = Math.max(0, cropX);
+if (cropX + targetWidth > videoWidth) {
+  cropX = videoWidth - targetWidth;
+}
 
-        const cropY = 0;
+// centraliza verticalmente
+const cropY = Math.round((videoHeight - targetHeight) / 2);
 
-        console.log("🎯 Crop final:", {
-          width: targetWidth,
-          height: targetHeight,
-          x: cropX,
-          y: cropY,
-        });
+console.log("🎯 Crop FIXED:", {
+  width: targetWidth,
+  height: targetHeight,
+  x: cropX,
+  y: cropY,
+});
 
-        const filter = `crop=${targetWidth}:${targetHeight}:${cropX}:${cropY},scale=1080:1920`;
+const filter = `crop=${targetWidth}:${targetHeight}:${cropX}:${cropY},scale=1080:1920`;
 
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
