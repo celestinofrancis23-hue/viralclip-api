@@ -6,6 +6,7 @@ FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
+    python3-pip \
     ffmpeg \
     ca-certificates \
     curl \
@@ -22,17 +23,21 @@ RUN python3 -m venv /opt/venv
 # Ativa venv no PATH
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Atualiza pip dentro da venv
+# Atualiza pip
 RUN pip install --upgrade pip
 
-# Instala yt-dlp e faster-whisper dentro da venv
-RUN pip install --no-cache-dir yt-dlp faster-whisper
+# ===============================
+# 🔥 Instala dependências Python
+# ===============================
+COPY requirements.txt .
 
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ===============================
+# Node
+# ===============================
 WORKDIR /app
 
-# ===============================
-# Node dependencies
-# ===============================
 COPY package*.json ./
 RUN npm install --ignore-scripts
 
