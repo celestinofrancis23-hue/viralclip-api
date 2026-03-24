@@ -57,45 +57,47 @@ module.exports = function VerticalRenderWorker({
         console.log("📐 Video:", videoWidth, "x", videoHeight);
 
         // ───────────────────────────────
-        // 2. CROP SEGURO
+        // 2. CROP CORRETO (9:16 REAL)
         // ───────────────────────────────
 
-// proporção vertical 9:16
-let targetWidth = Math.floor(videoWidth * 0.4);
-let targetHeight = Math.floor((targetWidth * 16) / 9);
+        let targetWidth = Math.floor(videoWidth * 0.4);
+        let targetHeight = Math.floor((targetWidth * 16) / 9);
 
-// se estourar altura → ajusta
-if (targetHeight > videoHeight) {
-  targetHeight = videoHeight;
-  targetWidth = Math.floor((targetHeight * 9) / 16);
-}
+        // ajuste se passar da altura
+        if (targetHeight > videoHeight) {
+          targetHeight = videoHeight;
+          targetWidth = Math.floor((targetHeight * 9) / 16);
+        }
 
-// posição X
-let cropX;
+        let cropX;
 
-if (crop && typeof crop.x === "number" && typeof crop.width === "number") {
-  cropX = Math.round(crop.x + crop.width / 2 - targetWidth / 2);
-} else {
-  cropX = Math.round((videoWidth - targetWidth) / 2);
-}
+        if (
+          crop &&
+          typeof crop.x === "number" &&
+          typeof crop.width === "number"
+        ) {
+          cropX = Math.round(crop.x + crop.width / 2 - targetWidth / 2);
+        } else {
+          cropX = Math.round((videoWidth - targetWidth) / 2);
+        }
 
-// clamp
-cropX = Math.max(0, cropX);
-if (cropX + targetWidth > videoWidth) {
-  cropX = videoWidth - targetWidth;
-}
+        // clamp
+        cropX = Math.max(0, cropX);
+        if (cropX + targetWidth > videoWidth) {
+          cropX = videoWidth - targetWidth;
+        }
 
-// centraliza verticalmente
-const cropY = Math.round((videoHeight - targetHeight) / 2);
+        // centraliza vertical
+        const cropY = Math.round((videoHeight - targetHeight) / 2);
 
-console.log("🎯 Crop FIXED:", {
-  width: targetWidth,
-  height: targetHeight,
-  x: cropX,
-  y: cropY,
-});
+        console.log("🎯 Crop FIXED:", {
+          width: targetWidth,
+          height: targetHeight,
+          x: cropX,
+          y: cropY,
+        });
 
-const filter = `crop=${targetWidth}:${targetHeight}:${cropX}:${cropY},scale=1080:1920`;
+        const filter = `crop=${targetWidth}:${targetHeight}:${cropX}:${cropY},scale=1080:1920`;
 
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
@@ -148,13 +150,30 @@ const filter = `crop=${targetWidth}:${targetHeight}:${cropX}:${cropY},scale=1080
         });
 
         ffmpeg.on("close", (code) => {
-          if (code !== 0) {
+          console.log("🎬 FFmpeg terminou com code:", code);
+
+          // 🔥 FIX PRINCIPAL
+          if (code !== 0 && code !== null) {
             return reject(
               new Error(`FFmpeg falhou no render vertical (code ${code})`)
             );
           }
 
+          // 🔥 valida output REAL
+          if (!fs.existsSync(outputPath)) {
+            return reject(new Error("Arquivo final não foi criado"));
+          }
+
+          const size = fs.statSync(outputPath).size;
+
+          if (size < 10000) {
+            return reject(
+              new Error("Arquivo final inválido ou muito pequeno")
+            );
+          }
+
           console.log("✅ Render vertical OK:", outputPath);
+          console.log("📦 Size:", (size / 1024).toFixed(2), "KB");
 
           resolve({
             ok: true,
