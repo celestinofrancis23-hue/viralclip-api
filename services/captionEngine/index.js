@@ -129,6 +129,7 @@ burnedClips.push({
   ...clip,
   videoPath: burned.outputVideoPath,
 });
+}
 
   console.log('\n==============================');
   console.log('[CaptionEngine] FINALIZADO');
