@@ -1,6 +1,39 @@
-const path = require('path');
-const fs = require('fs');
-const { spawn } = require('child_process');
+const path = require("path");
+const fs = require("fs");
+const { spawn } = require("child_process");
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function ensureFileExists(filePath, label = "arquivo") {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error(`[BurnInWorker] ${label} não encontrado: ${filePath}`);
+  }
+}
+
+function ensureOutputLooksValid(filePath) {
+  ensureFileExists(filePath, "output");
+
+  const stats = fs.statSync(filePath);
+
+  if (!stats.size || stats.size < 50_000) {
+    throw new Error(
+      `[BurnInWorker] Output inválido ou muito pequeno: ${filePath} (${stats.size} bytes)`
+    );
+  }
+
+  return stats.size;
+}
+
+function escapeAssPath(filePath) {
+  return filePath
+    .replace(/\\/g, "/")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
+}
 
 module.exports = function BurnInWorker({
   jobId,
@@ -11,117 +44,135 @@ module.exports = function BurnInWorker({
 }) {
   return new Promise((resolve, reject) => {
     try {
-      console.log('🔥 [BurnInWorker] START');
-      console.log('🎬 clipIndex:', clipIndex);
+      console.log(`🔥 [BurnInWorker] START clip=${clipIndex}`);
 
-      if (!jobDir) throw new Error('jobDir ausente');
-      if (!videoPath || !fs.existsSync(videoPath))
-        throw new Error('videoPath inválido');
-      if (!assContent || typeof assContent !== 'string')
-        throw new Error('assContent inválido');
+      if (!jobDir) {
+        throw new Error("[BurnInWorker] jobDir ausente");
+      }
 
-      // ===============================
-      // DIR
-      // ===============================
-      fs.mkdirSync(jobDir, { recursive: true });
+      if (!assContent || typeof assContent !== "string") {
+        throw new Error("[BurnInWorker] assContent inválido");
+      }
+
+      ensureFileExists(videoPath, "videoPath");
+      ensureDir(jobDir);
 
       const assPath = path.join(jobDir, `clip_${clipIndex}.ass`);
-      const outputVideoPath = path.join(
-        jobDir,
-        `clip_${clipIndex}_burned.mp4`
-      );
+      const outputVideoPath = path.join(jobDir, `clip_${clipIndex}_burned.mp4`);
 
-      // ===============================
-      // SALVAR ASS
-      // ===============================
-      fs.writeFileSync(assPath, assContent, 'utf8');
-      console.log('💾 ASS salvo:', assPath);
+      fs.writeFileSync(assPath, assContent, "utf8");
+      console.log(`💾 [BurnInWorker] ASS salvo: ${assPath}`);
 
-      // ===============================
-      // ESCAPE PATH (CRÍTICO)
-      // ===============================
-      const safeAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+      const safeAssPath = escapeAssPath(assPath);
 
-      // ===============================
-      // FFMPEG ARGS (OTIMIZADO)
-      // ===============================
+      // 🔥 Mais leve:
+      // - preset ultrafast
+      // - crf 30
+      // - threads 1
+      // - scale para 720x1280
+      // - áudio mais leve
+      const videoFilter = `ass=${safeAssPath},scale=720:1280`;
+
       const args = [
-        '-y',
-        '-i', videoPath,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
 
-        '-vf', `ass=${safeAssPath}`,
+        "-i", videoPath,
 
-        '-map', '0:v:0',
-        '-c:v', 'libx264',
+        "-vf", videoFilter,
 
-        // 🔥 CONTROLE DE PERFORMANCE
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-threads', '1',
+        "-map", "0:v:0",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "30",
+        "-pix_fmt", "yuv420p",
+        "-threads", "1",
 
-        '-pix_fmt', 'yuv420p',
+        "-map", "0:a?",
+        "-c:a", "aac",
+        "-b:a", "96k",
 
-        '-map', '0:a?',
-        '-c:a', 'aac',
-        '-b:a', '96k',
-
-        '-movflags', '+faststart',
+        "-movflags", "+faststart",
 
         outputVideoPath,
       ];
 
-      console.log('🎬 FFmpeg args:\n', args.join(' '));
+      console.log(`🎬 [BurnInWorker] FFmpeg clip=${clipIndex}`);
 
-      // ===============================
-      // SPAWN (PROFISSIONAL)
-      // ===============================
-      const ffmpeg = spawn('ffmpeg', args, {
-        stdio: ['ignore', 'ignore', 'pipe'],
+      const ffmpeg = spawn("ffmpeg", args, {
+        stdio: ["ignore", "ignore", "pipe"],
       });
 
-      ffmpeg.stderr.on('data', (data) => {
+      let stderrBuffer = "";
+      let stderrTail = [];
+
+      ffmpeg.stderr.on("data", (data) => {
         const msg = data.toString();
-        console.log('⚠️ FFmpeg:', msg);
+        stderrBuffer += msg;
+
+        // guarda só as últimas linhas úteis
+        stderrTail.push(msg);
+        if (stderrTail.length > 20) {
+          stderrTail.shift();
+        }
       });
 
-      ffmpeg.on('error', (err) => {
-        return reject(new Error('Erro ao iniciar FFmpeg: ' + err.message));
+      ffmpeg.on("error", (err) => {
+        return reject(
+          new Error(`[BurnInWorker] Erro ao iniciar FFmpeg: ${err.message}`)
+        );
       });
 
-      ffmpeg.on('close', (code, signal) => {
-        console.log('🧪 FFmpeg terminou:', { code, signal });
+      // timeout hard
+      const timeoutMs = 8 * 60 * 1000; // 8 minutos
+      const timeout = setTimeout(() => {
+        console.error(`⏱️ [BurnInWorker] Timeout clip=${clipIndex}`);
+        ffmpeg.kill("SIGKILL");
+      }, timeoutMs);
 
-        if (code !== 0) {
+      ffmpeg.on("close", (code, signal) => {
+        clearTimeout(timeout);
+
+        console.log(
+          `🧪 [BurnInWorker] FFmpeg terminou clip=${clipIndex} code=${code} signal=${signal || "none"}`
+        );
+
+        if (signal) {
           return reject(
-            new Error(`FFmpeg falhou (code=${code}, signal=${signal})`)
+            new Error(
+              `[BurnInWorker] FFmpeg interrompido no clip ${clipIndex} por signal=${signal}\n${stderrTail.join("")}`
+            )
           );
         }
 
-        // ===============================
-        // VALIDA OUTPUT
-        // ===============================
-        if (!fs.existsSync(outputVideoPath)) {
-          return reject(new Error('Arquivo final não foi gerado'));
+        if (code !== 0) {
+          return reject(
+            new Error(
+              `[BurnInWorker] FFmpeg falhou no clip ${clipIndex} (code=${code})\n${stderrTail.join("")}`
+            )
+          );
         }
 
-        const stats = fs.statSync(outputVideoPath);
+        try {
+          const size = ensureOutputLooksValid(outputVideoPath);
 
-        if (stats.size < 50_000) {
-          return reject(new Error('Arquivo final inválido ou muito pequeno'));
+          console.log(
+            `✅ [BurnInWorker] clip=${clipIndex} concluído (${(size / 1024 / 1024).toFixed(2)} MB)`
+          );
+
+          resolve({
+            jobId,
+            clipIndex,
+            inputVideoPath: videoPath,
+            assPath,
+            outputVideoPath,
+            status: "burned",
+          });
+        } catch (err) {
+          reject(err);
         }
-
-        console.log('✅ Burn-in concluído:', outputVideoPath);
-
-        resolve({
-          jobId,
-          clipIndex,
-          inputVideoPath: videoPath,
-          assPath,
-          outputVideoPath,
-          status: 'burned',
-        });
       });
-
     } catch (err) {
       reject(err);
     }
