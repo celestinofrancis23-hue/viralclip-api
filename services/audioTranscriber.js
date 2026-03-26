@@ -11,7 +11,7 @@ function resolvePythonBinary() {
     return venvPython;
   }
 
-  console.log("⚠️ [AudioTranscriber] .venv não encontrada. Usando python3 global.");
+  console.log("⚠️ [AudioTranscriber] Usando python3 global");
   return "python3";
 }
 
@@ -22,53 +22,37 @@ module.exports = async function audioTranscriber({
 }) {
   return new Promise((resolve, reject) => {
     try {
-      if (!audioPath) {
-        throw new Error("[AudioTranscriber] audioPath não informado");
+      if (!audioPath || !fs.existsSync(audioPath)) {
+        throw new Error("[AudioTranscriber] Áudio inválido");
       }
 
-      if (!fs.existsSync(audioPath)) {
-        throw new Error("[AudioTranscriber] Arquivo de áudio não encontrado: " + audioPath);
-      }
+      fs.mkdirSync(jobDir, { recursive: true });
 
-      if (!fs.existsSync(jobDir)) {
-        fs.mkdirSync(jobDir, { recursive: true });
-      }
+      const transcriptPath = path.join(
+        jobDir,
+        `${path.basename(audioPath)}.json`
+      );
 
-      console.log("🎧 [AudioTranscriber] Iniciando transcrição...");
-      console.log("🎵 Áudio:", audioPath);
-
-      const baseName = path.basename(audioPath, path.extname(audioPath));
-      const transcriptPath = path.join(jobDir, `${baseName}.json`);
+      console.log("🎧 Transcrevendo:", audioPath);
 
       const pythonBinary = resolvePythonBinary();
 
-      // 🔥 PYTHON CORRIGIDO
-const pythonCode = `
+      const pythonCode = `
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+
 from faster_whisper import WhisperModel
 import json
-import math
-import wave
-import contextlib
-
-def audio_duration(path):
-    with contextlib.closing(wave.open(path,'r')) as f:
-        frames = f.getnframes()
-        rate = f.getframerate()
-        return frames / float(rate)
 
 try:
-    duration = audio_duration(r"${audioPath}")
-    estimated_segments = max(1, math.ceil(duration / 2))
-
     model = WhisperModel(
-        "base",
+        "tiny",
         device="cpu",
         compute_type="int8"
     )
 
     segments, info = model.transcribe(
         r"${audioPath}",
-        task="transcribe",
         word_timestamps=False
     )
 
@@ -85,42 +69,49 @@ try:
         })
 
     with open(r"${transcriptPath}", "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
+        json.dump(output, f)
 
 except Exception as e:
     print("WHISPER_ERROR:", str(e))
     exit(1)
 `;
 
-      const proc = spawn(pythonBinary, ["-c", pythonCode], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const proc = spawn(pythonBinary, ["-c", pythonCode]);
 
-      // 🔥 DEBUG COMPLETO
-      proc.stdout.on("data", (data) => {
-        console.log("[WHISPER STDOUT]", data.toString());
-      });
+      let stderr = "";
 
-      proc.stderr.on("data", (data) => {
-        console.error("[WHISPER STDERR]", data.toString());
+      proc.stderr.on("data", (d) => {
+        stderr += d.toString();
+        console.error("⚠️ Whisper:", d.toString());
       });
 
       proc.on("error", (err) => {
-        reject(new Error("[AudioTranscriber] Falha ao iniciar Python: " + err.message));
+        return reject(new Error("Erro ao iniciar Whisper: " + err.message));
       });
 
-      proc.on("close", (code) => {
-        console.log("🐍 Whisper exit code:", code);
+      // ⏱️ TIMEOUT HARD (30s)
+      const timeout = setTimeout(() => {
+        proc.kill("SIGKILL");
+        reject(new Error("Whisper timeout (killed)"));
+      }, 30000);
 
-        if (code !== 0) {
+      proc.on("close", (code, signal) => {
+        clearTimeout(timeout);
+
+        console.log("🐍 Whisper exit:", code, signal);
+
+        // 🔥 tratamento robusto
+        if (code !== 0 || signal === "SIGKILL") {
           return reject(
-            new Error("[AudioTranscriber] Whisper falhou com código: " + code)
+            new Error(
+              `Whisper falhou (code=${code}, signal=${signal})\n${stderr}`
+            )
           );
         }
 
         if (!fs.existsSync(transcriptPath)) {
           return reject(
-            new Error("[AudioTranscriber] Transcript não foi gerado")
+            new Error("Transcript não foi gerado")
           );
         }
 
@@ -128,13 +119,13 @@ except Exception as e:
           fs.readFileSync(transcriptPath, "utf-8")
         );
 
-        console.log("✅ Transcrição concluída");
+        console.log("✅ Transcrição OK");
 
         resolve({
+          transcript,
           transcriptPath,
         });
       });
-
     } catch (err) {
       reject(err);
     }
