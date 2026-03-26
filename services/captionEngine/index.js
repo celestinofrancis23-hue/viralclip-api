@@ -104,23 +104,31 @@ const assSubtitles = ASSSubtitleBuilder({
   },
 });
 
-    // 8. Burn-in
-    const burned = BurnInWorker({
-      jobId,
-      jobDir,
-      clipIndex: clip.clipIndex,
-      videoPath: clip.videoPath,
-      assContent: assSubtitles,
-      captionLayouts,
-      options: {
-        resolution: { w: 1080, h: 1920 },
-      },
-    });
+// 8. Burn-in
+const burned = await BurnInWorker({
+  jobId,
+  jobDir,
+  clipIndex: clip.clipIndex,
+  videoPath: clip.videoPath,
+  assContent: assSubtitles,
+  captionLayouts,
+  options: {
+    resolution: { w: 1080, h: 1920 },
+  },
+});
 
-    console.log('[BurnInWorker] output:', burned.outputVideoPath);
+// 🔒 VALIDAÇÃO (DEPOIS do await)
+if (!burned || !burned.outputVideoPath) {
+  throw new Error(`[CaptionEngine] BurnIn falhou no clip ${clip.clipIndex}`);
+}
 
-    burnedClips.push(burned);
-  }
+console.log(`✅ [BurnInWorker] clip ${clip.clipIndex} output:`, burned.outputVideoPath);
+
+// 🔥 PUSH CORRETO
+burnedClips.push({
+  ...clip,
+  videoPath: burned.outputVideoPath,
+});
 
   console.log('\n==============================');
   console.log('[CaptionEngine] FINALIZADO');
