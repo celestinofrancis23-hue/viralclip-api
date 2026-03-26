@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { spawn } = require('child_process');
 
 module.exports = function BurnInWorker({
   jobId,
@@ -8,71 +8,122 @@ module.exports = function BurnInWorker({
   clipIndex,
   videoPath,
   assContent,
-  captionLayouts,
-  options = {},
 }) {
-  console.log('[BurnInWorker] START');
-  console.log('[BurnInWorker] clipIndex:', clipIndex);
+  return new Promise((resolve, reject) => {
+    try {
+      console.log('🔥 [BurnInWorker] START');
+      console.log('🎬 clipIndex:', clipIndex);
 
-  if (!jobDir) {
-    throw new Error('[BurnInWorker] jobDir ausente');
-  }
+      if (!jobDir) throw new Error('jobDir ausente');
+      if (!videoPath || !fs.existsSync(videoPath))
+        throw new Error('videoPath inválido');
+      if (!assContent || typeof assContent !== 'string')
+        throw new Error('assContent inválido');
 
-  if (!videoPath) {
-    throw new Error('[BurnInWorker] videoPath ausente');
-  }
+      // ===============================
+      // DIR
+      // ===============================
+      fs.mkdirSync(jobDir, { recursive: true });
 
-  if (!assContent || typeof assContent !== 'string') {
-    throw new Error('[BurnInWorker] assContent inválido');
-  }
+      const assPath = path.join(jobDir, `clip_${clipIndex}.ass`);
+      const outputVideoPath = path.join(
+        jobDir,
+        `clip_${clipIndex}_burned.mp4`
+      );
 
-  // ===============================
-  // GARANTE DIRETÓRIO
-  // ===============================
-  if (!fs.existsSync(jobDir)) {
-    fs.mkdirSync(jobDir, { recursive: true });
-  }
+      // ===============================
+      // SALVAR ASS
+      // ===============================
+      fs.writeFileSync(assPath, assContent, 'utf8');
+      console.log('💾 ASS salvo:', assPath);
 
-  // ===============================
-  // PATHS
-  // ===============================
-  const assPath = path.join(jobDir, `clip_${clipIndex}.ass`);
-  const outputVideoPath = path.join(jobDir, `clip_${clipIndex}_burned.mp4`);
+      // ===============================
+      // ESCAPE PATH (CRÍTICO)
+      // ===============================
+      const safeAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
 
-  // ===============================
-  // SALVA ASS
-  // ===============================
-  fs.writeFileSync(assPath, assContent, 'utf8');
-  console.log('[BurnInWorker] ASS salvo:', assPath);
+      // ===============================
+      // FFMPEG ARGS (OTIMIZADO)
+      // ===============================
+      const args = [
+        '-y',
+        '-i', videoPath,
 
-  // ===============================
-  // FFMPEG BURN-IN
-  // ===============================
-  const cmd = `
-ffmpeg -y \
-  -i "${videoPath}" \
-  -vf "ass=${assPath}" \
-  -c:v libx264 \
-  -pix_fmt yuv420p \
-  -c:a copy \
-  "${outputVideoPath}"
-`.trim();
+        '-vf', `ass=${safeAssPath}`,
 
-  console.log('[BurnInWorker] FFmpeg command:\n', cmd);
+        '-map', '0:v:0',
+        '-c:v', 'libx264',
 
-  execSync(cmd, { stdio: 'inherit' });
+        // 🔥 CONTROLE DE PERFORMANCE
+        '-preset', 'ultrafast',
+        '-crf', '28',
+        '-threads', '1',
 
-  console.log('[BurnInWorker] END');
+        '-pix_fmt', 'yuv420p',
 
-  // ===============================
-  // RETORNO PADRONIZADO
-  // ===============================
-  return {
-    jobId,
-    clipIndex,
-    inputVideoPath: videoPath,
-    assPath,
-    outputVideoPath,
-    status: 'burned',
-  };
+        '-map', '0:a?',
+        '-c:a', 'aac',
+        '-b:a', '96k',
+
+        '-movflags', '+faststart',
+
+        outputVideoPath,
+      ];
+
+      console.log('🎬 FFmpeg args:\n', args.join(' '));
+
+      // ===============================
+      // SPAWN (PROFISSIONAL)
+      // ===============================
+      const ffmpeg = spawn('ffmpeg', args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+
+      ffmpeg.stderr.on('data', (data) => {
+        const msg = data.toString();
+        console.log('⚠️ FFmpeg:', msg);
+      });
+
+      ffmpeg.on('error', (err) => {
+        return reject(new Error('Erro ao iniciar FFmpeg: ' + err.message));
+      });
+
+      ffmpeg.on('close', (code, signal) => {
+        console.log('🧪 FFmpeg terminou:', { code, signal });
+
+        if (code !== 0) {
+          return reject(
+            new Error(`FFmpeg falhou (code=${code}, signal=${signal})`)
+          );
+        }
+
+        // ===============================
+        // VALIDA OUTPUT
+        // ===============================
+        if (!fs.existsSync(outputVideoPath)) {
+          return reject(new Error('Arquivo final não foi gerado'));
+        }
+
+        const stats = fs.statSync(outputVideoPath);
+
+        if (stats.size < 50_000) {
+          return reject(new Error('Arquivo final inválido ou muito pequeno'));
+        }
+
+        console.log('✅ Burn-in concluído:', outputVideoPath);
+
+        resolve({
+          jobId,
+          clipIndex,
+          inputVideoPath: videoPath,
+          assPath,
+          outputVideoPath,
+          status: 'burned',
+        });
+      });
+
+    } catch (err) {
+      reject(err);
+    }
+  });
 };
