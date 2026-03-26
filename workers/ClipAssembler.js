@@ -2,6 +2,9 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// 🔒 GLOBAL LOCK (evita concorrência acidental)
+let isProcessing = false;
+
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -16,9 +19,10 @@ function ensureClipLooksValid(filePath) {
   ensureFileExists(filePath);
 
   const stats = fs.statSync(filePath);
+
   if (!stats.size || stats.size < 50_000) {
     throw new Error(
-      `[ClipAssembler] Clip gerado inválido ou muito pequeno: ${filePath} (${stats.size} bytes)`
+      `[ClipAssembler] Clip inválido: ${filePath} (${stats.size} bytes)`
     );
   }
 
@@ -32,13 +36,8 @@ function sanitizeTime(value) {
   return n;
 }
 
-function cutClip({
-  videoPath,
-  clipPath,
-  start,
-  duration,
-  clipIndex
-}) {
+// 🔥 FFmpeg EXECUTOR (ULTRA CONTROLADO)
+function cutClip({ videoPath, clipPath, start, duration, clipIndex }) {
   return new Promise((resolve, reject) => {
     const args = [
       "-hide_banner",
@@ -53,156 +52,130 @@ function cutClip({
       "-map", "0:a:0?",
 
       "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-crf", "23",
+      "-preset", "ultrafast",   // 🔥 REDUZ CPU
+      "-crf", "28",             // 🔥 REDUZ PESO CPU
       "-pix_fmt", "yuv420p",
 
       "-c:a", "aac",
-      "-b:a", "128k",
+      "-b:a", "96k",
 
       "-movflags", "+faststart",
-      "-threads", "1",
+      "-threads", "1",          // 🔥 CRÍTICO
 
       clipPath
     ];
 
-    console.log(`🎞️ [ClipAssembler] FFmpeg args clip ${clipIndex}:`);
-    console.log(args.join(" "));
+    console.log(`🎞️ Clip ${clipIndex} → FFmpeg start`);
 
     const ffmpeg = spawn("ffmpeg", args);
 
-    let stderrBuffer = "";
-    let stdoutBuffer = "";
+    let stderr = "";
 
-    ffmpeg.stdout.on("data", (data) => {
-      const text = data.toString();
-      stdoutBuffer += text;
-      console.log(`[FFMPEG STDOUT clip ${clipIndex}] ${text.trim()}`);
-    });
-
-    ffmpeg.stderr.on("data", (data) => {
-      const text = data.toString();
-      stderrBuffer += text;
-      console.error(`[FFMPEG STDERR clip ${clipIndex}] ${text.trim()}`);
+    ffmpeg.stderr.on("data", (d) => {
+      stderr += d.toString();
     });
 
     ffmpeg.on("error", (err) => {
-      reject(
-        new Error(
-          `[ClipAssembler] Erro ao iniciar FFmpeg no clip ${clipIndex}: ${err.message}`
-        )
-      );
+      reject(new Error(`[ClipAssembler] FFmpeg error: ${err.message}`));
     });
 
     ffmpeg.on("close", (code, signal) => {
-      console.log(
-        `📦 [ClipAssembler] FFmpeg terminou clip ${clipIndex} | code=${code} | signal=${signal || "none"}`
-      );
-
-      if (code !== 0) {
+      if (signal) {
         return reject(
-          new Error(
-            `[ClipAssembler] FFmpeg falhou no clip ${clipIndex}. code=${code} signal=${signal || "none"} stderr=${stderrBuffer || "vazio"}`
-          )
+          new Error(`[ClipAssembler] FFmpeg killed (signal=${signal})`)
         );
       }
 
-      if (signal) {
+      if (code !== 0) {
         return reject(
-          new Error(
-            `[ClipAssembler] FFmpeg interrompido no clip ${clipIndex} por signal=${signal}`
-          )
+          new Error(`[ClipAssembler] FFmpeg failed (code=${code})\n${stderr}`)
         );
       }
 
       try {
         const size = ensureClipLooksValid(clipPath);
+
         console.log(
-          `✅ [ClipAssembler] Clip ${clipIndex} gerado com sucesso (${(size / 1024 / 1024).toFixed(2)} MB)`
+          `✅ Clip ${clipIndex} OK (${(size / 1024 / 1024).toFixed(2)} MB)`
         );
+
         resolve();
-      } catch (e) {
-        reject(e);
+      } catch (err) {
+        reject(err);
       }
     });
   });
 }
 
+// ===============================
+// MAIN
+// ===============================
 module.exports = async function ClipAssembler({
   videoPath,
   viralMoments,
   jobId,
   jobDir,
 }) {
+  if (isProcessing) {
+    throw new Error("⚠️ Já existe um processamento ativo (proteção contra overload)");
+  }
+
+  isProcessing = true;
+
   try {
     if (!videoPath || !fs.existsSync(videoPath)) {
       throw new Error("[ClipAssembler] Vídeo não encontrado");
     }
 
     if (!Array.isArray(viralMoments) || viralMoments.length === 0) {
-      throw new Error("[ClipAssembler] viralMoments inválido ou vazio");
+      throw new Error("[ClipAssembler] viralMoments inválido");
     }
 
     if (!jobDir) {
-      throw new Error("[ClipAssembler] jobDir é obrigatório");
+      throw new Error("[ClipAssembler] jobDir obrigatório");
     }
 
     const clipsDir = path.join(jobDir, "clips");
     safeMkdir(clipsDir);
 
-    console.log("🎬 [ClipAssembler] Iniciando cortes...");
-    console.log("🎯 Total de clips recebidos:", viralMoments.length);
-    console.log("📹 Video path:", videoPath);
-    console.log("🗂️ Clips dir:", clipsDir);
+    console.log("🎬 Iniciando ClipAssembler...");
+    console.log("🎯 Clips recebidos:", viralMoments.length);
 
     const clips = [];
 
-    for (let i = 0; i < viralMoments.length; i++) {
-      const moment = viralMoments[i];
-
+    // 🔥 SEQUENCIAL GARANTIDO
+    for (const [i, moment] of viralMoments.entries()) {
       const start = sanitizeTime(moment.startTime ?? moment.start);
       const end = sanitizeTime(moment.endTime ?? moment.end);
       const clipIndex = Number.isFinite(Number(moment.clipIndex))
         ? Number(moment.clipIndex)
         : i;
 
-      if (start === null || end === null) {
-        console.warn(
-          `⚠️ [ClipAssembler] Clip ${clipIndex} ignorado: start/end inválidos`,
-          moment
-        );
-        continue;
-      }
-
-      if (end <= start) {
-        console.warn(
-          `⚠️ [ClipAssembler] Clip ${clipIndex} ignorado: end <= start (${start} -> ${end})`
-        );
+      if (start === null || end === null || end <= start) {
+        console.warn(`⚠️ Clip ${clipIndex} ignorado`);
         continue;
       }
 
       const duration = end - start;
 
       if (duration < 1) {
-        console.warn(
-          `⚠️ [ClipAssembler] Clip ${clipIndex} ignorado: duração muito pequena (${duration}s)`
-        );
+        console.warn(`⚠️ Clip ${clipIndex} muito curto (${duration}s)`);
         continue;
       }
 
-      const clipName = `clip_${clipIndex}.mp4`;
-      const clipPath = path.join(clipsDir, clipName);
+      const clipPath = path.join(clipsDir, `clip_${clipIndex}.mp4`);
 
       console.log(
-        `✂️ [ClipAssembler] Clip ${clipIndex}: ${start.toFixed(2)}s → ${end.toFixed(2)}s (${duration.toFixed(2)}s)`
+        `✂️ Clip ${clipIndex}: ${start.toFixed(2)} → ${end.toFixed(2)}`
       );
 
+      // 🔥 EXECUTA UM POR VEZ
       await cutClip({
         videoPath,
         clipPath,
         start,
         duration,
-        clipIndex
+        clipIndex,
       });
 
       clips.push({
@@ -211,34 +184,24 @@ module.exports = async function ClipAssembler({
         startTime: start,
         endTime: end,
         duration,
-        reason: moment.reason ?? null,
-        priority: moment.priority ?? null,
       });
     }
 
     if (clips.length === 0) {
-      throw new Error("[ClipAssembler] Nenhum clip válido foi gerado");
+      throw new Error("Nenhum clip válido gerado");
     }
 
-    console.log("🧪 [ClipAssembler] Clips finais:");
-    clips.forEach((c) => {
-      console.log({
-        clipIndex: c.clipIndex,
-        startTime: c.startTime,
-        endTime: c.endTime,
-        duration: c.duration,
-        clipPath: c.clipPath,
-      });
-    });
-
-    console.log("🔥 [ClipAssembler] Total de clips gerados:", clips.length);
+    console.log("🔥 TOTAL CLIPS:", clips.length);
 
     return {
       clips,
       clipsDir,
     };
+
   } catch (err) {
-    console.error("[ClipAssembler] ERROR:", err);
-throw err;
+    console.error("❌ ClipAssembler ERROR:", err.message);
+    throw err;
+  } finally {
+    isProcessing = false; // 🔓 libera lock
   }
 };
