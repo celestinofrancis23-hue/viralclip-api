@@ -105,37 +105,34 @@ module.exports = function VerticalRenderWorker({
         // 3. FFMPEG
         // ───────────────────────────────
 
-        const args = [
-          "-y",
-          "-i",
-          inputPath,
+const args = [
+  "-y",
+  "-i",
+  inputPath,
 
-          "-vf",
-          filter,
+  "-vf",
+  filter,
 
-          "-map",
-          "0:v:0",
-          "-c:v",
-          "libx264",
-          "-preset",
-          "fast",
-          "-crf",
-          "23",
-          "-pix_fmt",
-          "yuv420p",
+  "-map", "0:v:0",
+  "-c:v", "libx264",
 
-          "-map",
-          "0:a?",
-          "-c:a",
-          "aac",
-          "-b:a",
-          "128k",
+  // 🔥 SUPER IMPORTANTE ↓↓↓
+  "-preset", "ultrafast",
+  "-threads", "1",
+  "-max_muxing_queue_size", "1024",
 
-          "-movflags",
-          "+faststart",
+  "-crf", "28",
 
-          outputPath,
-        ];
+  "-pix_fmt", "yuv420p",
+
+  "-map", "0:a?",
+  "-c:a", "aac",
+  "-b:a", "96k",
+
+  "-movflags", "+faststart",
+
+  outputPath,
+];
 
         console.log("🎬 FFmpeg ARGS:", args.join(" "));
 
