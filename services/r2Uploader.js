@@ -1,4 +1,6 @@
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const fs = require('fs');
+const path = require('path');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const r2 = new S3Client({
   region: "auto",
@@ -9,27 +11,33 @@ const r2 = new S3Client({
   },
 });
 
-async function uploadToR2(file, userId, jobId) {
-
-  if (!file || !file.buffer) {
-    throw new Error("Invalid file buffer");
+async function uploadToR2(filePath, userId, jobId) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error("Arquivo não encontrado: " + filePath);
   }
 
-  const extension = file.originalname.split(".").pop().toLowerCase();
+  const buffer = fs.readFileSync(filePath);
 
-  const key = `clips/${userId}/${jobId}.${extension}`;
+  if (!buffer || buffer.length === 0) {
+    throw new Error("Invalid file buffer (empty)");
+  }
 
-  console.log("UPLOAD DEBUG:", {
-    userId,
-    jobId,
-    fileName: file.originalname
+  const fileName = path.basename(filePath);
+  const extension = fileName.split(".").pop().toLowerCase();
+
+  const key = `clips/${userId}/${jobId}/${fileName}`;
+
+  console.log("📤 UPLOAD DEBUG:", {
+    filePath,
+    size: buffer.length,
+    key,
   });
 
   const command = new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
-    Body: file.buffer,
-    ContentType: file.mimetype
+    Body: buffer,
+    ContentType: "video/mp4",
   });
 
   await r2.send(command);
