@@ -299,16 +299,16 @@ async function processJobPipeline(job, jobDir) {
     const uploadedClips = [];
 
     for (const clip of captionResults) {
-      const thumbnailPath = await ClipThumbnailWorker({
-        videoPath: clip.outputVideoPath,
-        jobDir,
-      });
+const thumbnailPath = await ClipThumbnailWorker({
+  videoPath: clip.videoPath, // ✅ CORRETO
+  jobDir,
+});
 
-      const videoKey = await uploadToR2(
-        clip.outputVideoPath,
-        userId,
-        jobId
-      );
+const videoKey = await uploadToR2(
+  clip.videoPath,
+  userId,
+  jobId
+);
 
       const thumbKey = await uploadToR2(
         thumbnailPath,
