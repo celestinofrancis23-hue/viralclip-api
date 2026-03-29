@@ -194,7 +194,11 @@ function writeJobStatus(jobDir, status, extra = {}) {
 ====================================================== */
 async function processJobPipeline(job, jobDir) {
   const jobId = job.jobId;
-  const userId = job.meta?.userId;
+  const userId = job.userId ?? job.meta?.userId;
+
+if (!userId) {
+  throw new Error("userId ausente no job");
+}
   const settings = job.settings;
 
   try {
@@ -285,6 +289,7 @@ async function processJobPipeline(job, jobDir) {
     const captionPayload = CaptionMerge({
       jobId,
       jobDir,
+      userId,
       transcript,
       verticalClips: verticalResults,
     });
