@@ -182,6 +182,7 @@ function writeJobStatus(jobDir, status, extra = {}) {
 
   const data = {
     status,
+    progress: extra.progress ?? null, // 🔥 ADICIONADO
     ...extra,
     updatedAt: new Date().toISOString(),
   };
@@ -194,8 +195,7 @@ function writeJobStatus(jobDir, status, extra = {}) {
 ====================================================== */
 async function processJobPipeline(job, jobDir) {
   const jobId = job.jobId;
-  const userId = job.userId ?? job.meta?.userId;
-
+const userId = job.userId || job.meta?.userId;
 if (!userId) {
   throw new Error("userId ausente no job");
 }
