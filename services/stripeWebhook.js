@@ -8,7 +8,7 @@ module.exports = function registerStripeWebhook(app, stripe, supabaseAdmin) {
     if (!priceId) return null;
 
     if (priceId === process.env.STRIPE_PRICE_ESSENTIAL) return "Essential";
-    if (priceId === process.env.STRIPE_PRICE_GROWTH) return "Growth Plus";
+    if (priceId === process.env.STRIPE_PRICE_GROWTH) return "Growth";
     if (priceId === process.env.STRIPE_PRICE_ELITE) return "Elite";
 
     return "Unknown";
@@ -19,7 +19,7 @@ module.exports = function registerStripeWebhook(app, stripe, supabaseAdmin) {
     // créditos = número de "sermões/links" por mês
     if (plan === "Essential") return 4;
     if (plan === "Growth Plus") return 8;
-    if (plan === "Elite") return 16;
+    if (plan === "Elite") return 12;
 
     // Unknown / null -> 0 para não liberar uso
     return 0;
