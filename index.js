@@ -203,10 +203,12 @@ if (!userId) {
 
   try {
     // 🔥 STATUS: processing
-    writeJobStatus(jobDir, "processing");
+writeJobStatus(jobDir, "processing", { progress: 10 });
 
     // 1️⃣ Download
     const { videoPath } = await videoDownloader(job, BASE_TEMP_DIR);
+
+writeJobStatus(jobDir, "processing", { progress: 20 });
 
     // 2️⃣ Audio
     const { audioPath } = await audioExtractor({
@@ -215,6 +217,8 @@ if (!userId) {
       jobDir,
     });
 
+writeJobStatus(jobDir, "processing", { progress: 30 });
+
     // 3️⃣ Transcrição
     const { transcriptPath } = await audioTranscriber({
       audioPath,
@@ -222,12 +226,14 @@ if (!userId) {
       jobDir,
     });
 
+writeJobStatus(jobDir, "processing", { progress: 40 });
+
     const transcript = JSON.parse(
       fs.readFileSync(transcriptPath, "utf-8")
     );
 
     // 🔥 STATUS: generating_clips
-    writeJobStatus(jobDir, "generating clips");
+writeJobStatus(jobDir, "generating clips", { progress: 50 });
 
     // 4️⃣ Viral Moments
     const viralMoments = await ViralMomentAnalyzer({
@@ -236,6 +242,8 @@ if (!userId) {
       clipCount: settings.clipCount,
     });
 
+writeJobStatus(jobDir, "generating clips", { progress: 60 });
+
     // 5️⃣ Clip Assembler
     const clipResult = await ClipAssembler({
       videoPath,
@@ -243,6 +251,8 @@ if (!userId) {
       jobId,
       jobDir,
     });
+
+writeJobStatus(jobDir, "generating clips", { progress: 70 });
 
     // 6️⃣ Face Detection
     const faceStats = await faceDetectionWorker({ videoPath });
@@ -260,6 +270,8 @@ if (!userId) {
     // 7️⃣ Vertical Render
     const verticalResults = [];
     const verticalDir = path.join(jobDir, "vertical");
+
+writeJobStatus(jobDir, "generating clips", { progress: 80 });
 
     if (!fs.existsSync(verticalDir)) {
       fs.mkdirSync(verticalDir, { recursive: true });
@@ -293,6 +305,8 @@ if (!userId) {
       transcript,
       verticalClips: verticalResults,
     });
+
+writeJobStatus(jobDir, "generating clips", { progress: 90 });
 
     const captionResults = await CaptionEngine(captionPayload);
 
@@ -330,10 +344,10 @@ const videoKey = await uploadToR2(
       });
     }
 
-    // 🔥 STATUS: clips_ready
-    writeJobStatus(jobDir, "clips ready", {
-      clips: uploadedClips,
-    });
+writeJobStatus(jobDir, "clips ready", {
+  progress: 100,
+  clips: uploadedClips
+});
 
   } catch (err) {
     console.error("❌ Pipeline error:", err);
