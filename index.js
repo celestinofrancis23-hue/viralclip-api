@@ -191,35 +191,84 @@ function writeJobStatus(jobDir, status, extra = {}) {
 }
 
 function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) {
-  const safeLength = Number(clipLength) || 30;
 
+  const safeLength = Number(clipLength) || 30;
+  const maxClipsRequested = Number(clipCount) || 5;
+
+  // 🎯 descobrir duração total do vídeo
   const videoEnd =
     transcriptSegments?.length > 0
       ? Number(
-          transcriptSegments[transcriptSegments.length - 1]?.end ||
-          transcriptSegments[transcriptSegments.length - 1]?.endTime ||
+          transcriptSegments[transcriptSegments.length - 1].end ||
+          transcriptSegments[transcriptSegments.length - 1].endTime ||
           0
         )
       : 0;
 
   const clips = [];
 
-for (let i = 0; i < aiMoments.length && clips.length < clipCount; i++) {
-    const start = Number(aiMoments[i]?.startTime);
+  if (!videoEnd || videoEnd <= 0) {
+    console.warn("⚠️ videoEnd inválido");
+    return clips;
+  }
+
+  // 🔥 máximo possível baseado no tamanho do vídeo
+  const maxPossibleClips = Math.floor(videoEnd / safeLength);
+
+  const finalClipLimit = Math.min(maxClipsRequested, maxPossibleClips);
+
+  let lastEnd = 0;
+
+  for (let i = 0; i < aiMoments.length; i++) {
+
+    if (clips.length >= finalClipLimit) break;
+
+    const start = Number(aiMoments[i].startTime);
 
     if (!Number.isFinite(start)) continue;
 
+    // 🚫 evita sobreposição
+    if (start < lastEnd) continue;
+
     let end = start + safeLength;
 
+    // 🔚 não ultrapassar vídeo
     if (end > videoEnd) {
-  end = videoEnd;
-}
-   
+      end = videoEnd;
+    }
+
+    // 🚫 evitar clips muito curtos
+    if ((end - start) < safeLength * 0.5) continue;
+
     clips.push({
       clipIndex: clips.length,
       startTime: Number(start.toFixed(2)),
       endTime: Number(end.toFixed(2)),
     });
+
+    lastEnd = end;
+  }
+
+  // 🔥 FALLBACK (caso AI falhe ou não consiga gerar suficientes)
+  if (clips.length === 0) {
+
+    console.warn("⚠️ AI falhou → fallback sequencial");
+
+    let current = 0;
+
+    while (
+      current + safeLength <= videoEnd &&
+      clips.length < finalClipLimit
+    ) {
+
+      clips.push({
+        clipIndex: clips.length,
+        startTime: Number(current.toFixed(2)),
+        endTime: Number((current + safeLength).toFixed(2)),
+      });
+
+      current += safeLength;
+    }
   }
 
   return clips;
