@@ -22,7 +22,7 @@ const validateJobContract = require("./validators/validateJobContract");
 const videoDownloader = require("./services/videoDownloader");
 const audioExtractor = require("./services/audioExtractor");
 const audioTranscriber = require("./services/audioTranscriber");
-const ViralMomentAnalyzer = require("./workers/viralMomentAnalyzer");
+const { analyzeViralMoments } = require("./services/aiAnalyzer");
 const ClipAssembler = require("./workers/ClipAssembler");
 const faceDetectionWorker = require("./workers/faceDetectionWorker");
 const FaceDominanceAnalyzer = require("./workers/faceDominanceAnalyzer");
@@ -235,12 +235,12 @@ writeJobStatus(jobDir, "processing", { progress: 40 });
     // 🔥 STATUS: generating_clips
 writeJobStatus(jobDir, "generating clips", { progress: 50 });
 
-    // 4️⃣ Viral Moments
-    const viralMoments = await ViralMomentAnalyzer({
-      transcriptSegments: transcript.segments,
-      clipLengthSeconds: settings.clipLength,
-      clipCount: settings.clipCount,
-    });
+// 4️⃣ Viral Moments (AI - OpenAI)
+const viralMoments = await analyzeViralMoments({
+  transcript: transcript.segments,
+  clipLength: settings.clipLength,
+  clipCount: settings.clipCount
+});
 
 writeJobStatus(jobDir, "generating clips", { progress: 60 });
 
