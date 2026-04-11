@@ -89,14 +89,6 @@ if (!parsed || !Array.isArray(parsed.frames)) {
 
 console.log("🎯 Frames detectados:", parsed.frames.length);
 
-const parsed = JSON.parse(stdout.trim());
-
-if (!parsed || !Array.isArray(parsed.frames)) {
-  throw new Error("[FaceDetectionWorker] frames inválidos");
-}
-
-console.log("🎯 Frames detectados:", parsed.frames.length);
-         
           console.log("✅ [FaceDetectionWorker] Finalizado com sucesso");
 
           return resolve(parsed);
