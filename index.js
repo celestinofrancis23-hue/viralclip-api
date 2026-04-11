@@ -190,6 +190,39 @@ function writeJobStatus(jobDir, status, extra = {}) {
   fs.writeFileSync(statusPath, JSON.stringify(data, null, 2));
 }
 
+function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) {
+  const safeLength = Number(clipLength) || 30;
+
+  const videoEnd =
+    transcriptSegments?.length > 0
+      ? Number(
+          transcriptSegments[transcriptSegments.length - 1]?.end ||
+          transcriptSegments[transcriptSegments.length - 1]?.endTime ||
+          0
+        )
+      : 0;
+
+  const clips = [];
+
+for (let i = 0; i < aiMoments.length && clips.length < clipCount; i++) {
+    const start = Number(aiMoments[i]?.startTime);
+
+    if (!Number.isFinite(start)) continue;
+
+    let end = start + safeLength;
+
+    if (end > videoEnd) break;
+
+    clips.push({
+      clipIndex: clips.length,
+      startTime: Number(start.toFixed(2)),
+      endTime: Number(end.toFixed(2)),
+    });
+  }
+
+  return clips;
+}
+
 /* ======================================================
    🚀 PROCESS JOB PIPELINE (BACKGROUND)
 ====================================================== */
@@ -236,11 +269,20 @@ writeJobStatus(jobDir, "processing", { progress: 40 });
 writeJobStatus(jobDir, "generating clips", { progress: 50 });
 
 // 4️⃣ Viral Moments (AI - OpenAI)
-const viralMoments = await analyzeViralMoments({
+const aiMoments = await analyzeViralMoments({
   transcript: transcript.segments,
   clipLength: settings.clipLength,
   clipCount: settings.clipCount
 });
+
+const viralMoments = buildClipsFromAI(
+  aiMoments,
+  settings.clipLength,
+  transcript.segments,
+  settings.clipCount
+);
+
+console.log("🎯 FINAL CLIPS:", viralMoments);
 
 writeJobStatus(jobDir, "generating clips", { progress: 60 });
 
