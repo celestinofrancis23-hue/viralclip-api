@@ -1,33 +1,36 @@
 module.exports = function FixedVerticalCropBuilder({
   dominantFace,
   videoWidth,
-  videoHeight,
+  videoHeight
 }) {
-  const TARGET_RATIO = 9 / 16;
-
-  // altura fixa = vídeo original
+  const cropWidth = 607;
   const cropHeight = videoHeight;
-  const cropWidth = Math.round(cropHeight * TARGET_RATIO);
 
-  // centro REAL da face
-  const faceCenterX = dominantFace.x + dominantFace.w / 2;
+  // fallback
+  if (!dominantFace || dominantFace.x === undefined) {
+    return {
+      width: cropWidth,
+      height: cropHeight,
+      x: (videoWidth - cropWidth) / 2,
+      y: 0,
+    };
+  }
 
-  // crop centralizado na face
-  let cropX = Math.round(faceCenterX - cropWidth / 2);
+  const centerX = dominantFace.x + dominantFace.width / 2;
 
-  // clamp horizontal (NUNCA sair do vídeo)
+  let cropX = centerX - cropWidth / 2;
+
+  // clamp
   if (cropX < 0) cropX = 0;
+
   if (cropX + cropWidth > videoWidth) {
     cropX = videoWidth - cropWidth;
   }
 
-  // vertical fixo (topo)
-  const cropY = 0;
-
   return {
-    x: cropX,
-    y: cropY,
     width: cropWidth,
     height: cropHeight,
+    x: Math.round(cropX),
+    y: 0,
   };
-};
+}
