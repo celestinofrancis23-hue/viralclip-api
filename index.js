@@ -211,8 +211,10 @@ for (let i = 0; i < aiMoments.length && clips.length < clipCount; i++) {
 
     let end = start + safeLength;
 
-    if (end > videoEnd) break;
-
+    if (end > videoEnd) {
+  end = videoEnd;
+}
+   
     clips.push({
       clipIndex: clips.length,
       startTime: Number(start.toFixed(2)),
