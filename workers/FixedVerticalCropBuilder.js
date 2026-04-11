@@ -1,22 +1,25 @@
 module.exports = function FixedVerticalCropBuilder({
   frames,
   videoWidth,
-  videoHeight
+  videoHeight,
 }) {
   const cropWidth = 607;
   const cropHeight = videoHeight;
 
-  // 🔒 fallback total (sem frames)
+  // 🔥 margem de segurança (ESSENCIAL)
+  const SAFE_MARGIN = 100;
+
+  // 🛑 fallback total (sem frames)
   if (!frames || !Array.isArray(frames) || frames.length === 0) {
     return {
       width: cropWidth,
       height: cropHeight,
       x: Math.round((videoWidth - cropWidth) / 2),
-      y: 0
+      y: 0,
     };
   }
 
-  // 🔥 calcular média do centro das faces
+  // 🔥 calcular média dos centros
   let sumX = 0;
   let validFrames = 0;
 
@@ -32,22 +35,28 @@ module.exports = function FixedVerticalCropBuilder({
     }
   }
 
-  // 🔒 fallback se frames inválidos
+  // 🛑 fallback se inválido
   if (validFrames === 0) {
     return {
       width: cropWidth,
       height: cropHeight,
       x: Math.round((videoWidth - cropWidth) / 2),
-      y: 0
+      y: 0,
     };
   }
 
+  // 🎯 centro médio
   const avgCenterX = sumX / validFrames;
 
+  // 🔥 aplicar margem de segurança
   let cropX = avgCenterX - cropWidth / 2;
 
-  // 🔒 clamp (não sair do vídeo)
+  // 👉 adiciona "respiro" lateral
+  cropX -= SAFE_MARGIN / 2;
+
+  // 🛑 clamp (não sair do vídeo)
   if (cropX < 0) cropX = 0;
+
   if (cropX + cropWidth > videoWidth) {
     cropX = videoWidth - cropWidth;
   }
@@ -56,6 +65,6 @@ module.exports = function FixedVerticalCropBuilder({
     width: cropWidth,
     height: cropHeight,
     x: Math.round(cropX),
-    y: 0
+    y: 0,
   };
 };
