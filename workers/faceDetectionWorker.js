@@ -52,6 +52,7 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
       let stdout = "";
       let stderr = "";
 
+      // 📥 capturar saída
       p.stdout.on("data", (data) => {
         stdout += data.toString();
       });
@@ -60,7 +61,7 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
         stderr += data.toString();
       });
 
-      // ✅ ERRO DE PROCESSO (fixado)
+      // ❌ erro ao iniciar processo
       p.on("error", (err) => {
         return reject(
           new Error(
@@ -69,7 +70,7 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
         );
       });
 
-      // ✅ FINALIZAÇÃO
+      // ✅ quando termina
       p.on("close", (code) => {
         if (code !== 0) {
           return reject(
@@ -82,16 +83,16 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
         try {
           const parsed = JSON.parse(stdout.trim());
 
-          // ✅ VALIDAÇÃO FORTE
+          // 🔒 validação
           if (!parsed || !Array.isArray(parsed.frames)) {
             throw new Error("[FaceDetectionWorker] frames inválidos");
           }
 
           console.log("🎯 Frames detectados:", parsed.frames.length);
 
-          // ✅ FALLBACK (IMPORTANTE)
+          // ⚠️ fallback (sem rosto)
           if (parsed.frames.length === 0) {
-            console.log("⚠️ Nenhum rosto detectado → usando fallback");
+            console.log("⚠️ Nenhum rosto detectado → fallback ativado");
 
             return resolve({
               frames: [],
@@ -103,7 +104,7 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
 
           return resolve(parsed);
 
-        } catch (e) {
+        } catch (err) {
           return reject(
             new Error(
               `[FaceDetectionWorker] JSON inválido retornado pelo Python\nSaída:\n${stdout}`

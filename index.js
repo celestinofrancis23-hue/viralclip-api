@@ -350,15 +350,15 @@ writeJobStatus(jobDir, "generating clips", { progress: 70 });
     // 6️⃣ Face Detection
     const faceStats = await faceDetectionWorker({ videoPath });
 
-    const dominance = FaceDominanceAnalyzer({
-      frames: faceStats.frames,
-    });
+const dominance = FaceDominanceAnalyzer({
+  frames: faceStats.frames || [],
+});
 
-    const crop = FixedVerticalCropBuilder({
-      dominantFace: dominance.dominantFace,
-      videoWidth: 1920,
-      videoHeight: 1080,
-    });
+const crop = FixedVerticalCropBuilder({
+  dominantFace: dominance?.dominantFace || null,
+  videoWidth: 1920,
+  videoHeight: 1080,
+});
 
     // 7️⃣ Vertical Render
     const verticalResults = [];
