@@ -9,7 +9,6 @@ function assertFileExists(filePath, label) {
 }
 
 function resolvePythonBinary() {
-  // Se existir venv local, usa ela
   const venvPath = path.join(process.cwd(), ".venv", "bin", "python");
 
   if (fs.existsSync(venvPath)) {
@@ -17,7 +16,6 @@ function resolvePythonBinary() {
     return venvPath;
   }
 
-  // Caso contrário, usa python3 global (Docker / Railway)
   console.log("🐍 Usando Python global (python3)");
   return "python3";
 }
@@ -62,15 +60,16 @@ function FaceDetectionWorker({ videoPath, confidence = 0.5 }) {
         stderr += data.toString();
       });
 
+      // ✅ ERRO DE PROCESSO (fixado)
       p.on("error", (err) => {
-p.on("error", (err) => {
-  reject(
-    new Error(
-      `[FaceDetectionWorker] Erro ao iniciar processo Python: ${err.message}`
-    )
-  );
-});
+        return reject(
+          new Error(
+            `[FaceDetectionWorker] Erro ao iniciar processo Python: ${err.message}`
+          )
+        );
+      });
 
+      // ✅ FINALIZAÇÃO
       p.on("close", (code) => {
         if (code !== 0) {
           return reject(
@@ -81,17 +80,29 @@ p.on("error", (err) => {
         }
 
         try {
-            const parsed = JSON.parse(stdout.trim());
+          const parsed = JSON.parse(stdout.trim());
 
-if (!parsed || !Array.isArray(parsed.frames)) {
-  throw new Error("[FaceDetectionWorker] frames inválidos");
-}
+          // ✅ VALIDAÇÃO FORTE
+          if (!parsed || !Array.isArray(parsed.frames)) {
+            throw new Error("[FaceDetectionWorker] frames inválidos");
+          }
 
-console.log("🎯 Frames detectados:", parsed.frames.length);
+          console.log("🎯 Frames detectados:", parsed.frames.length);
+
+          // ✅ FALLBACK (IMPORTANTE)
+          if (parsed.frames.length === 0) {
+            console.log("⚠️ Nenhum rosto detectado → usando fallback");
+
+            return resolve({
+              frames: [],
+              fallback: true
+            });
+          }
 
           console.log("✅ [FaceDetectionWorker] Finalizado com sucesso");
 
           return resolve(parsed);
+
         } catch (e) {
           return reject(
             new Error(
@@ -102,7 +113,7 @@ console.log("🎯 Frames detectados:", parsed.frames.length);
       });
 
     } catch (err) {
-      reject(err);
+      return reject(err);
     }
   });
 }
