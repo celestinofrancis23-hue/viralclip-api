@@ -1,4 +1,4 @@
-kasync function HighlightWorker({ clip, segments }) {
+async function HighlightWorker({ clip, segments }) {
   if (!segments.length) return { segments: [] };
 
   const highlighted = segments.map((seg) => ({
