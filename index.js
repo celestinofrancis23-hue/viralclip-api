@@ -723,17 +723,8 @@ app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
    📡 GET /jobs/:jobId
 ====================================================== */
 app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
-  console.log("[GET /jobs/:jobId] params:", req.params, "query:", req.query, "x-user-id header:", req.headers["x-user-id"] || "(ausente)");
   try {
     const { jobId } = req.params;
-    const userId = req.query.userId || req.headers["x-user-id"];
-
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: "userId é obrigatório via query param (?userId=...) ou header X-User-Id",
-      });
-    }
 
     const jobDir = path.join(BASE_TEMP_DIR, jobId);
     const statusPath = path.join(jobDir, "status.json");
@@ -747,13 +738,6 @@ app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
 
     const raw = fs.readFileSync(statusPath, "utf-8");
     const statusData = JSON.parse(raw);
-
-    if (statusData.userId && statusData.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        error: "Acesso negado",
-      });
-    }
 
     return res.json({
       success: true,
