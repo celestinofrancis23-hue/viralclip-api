@@ -39,6 +39,10 @@ const rateLimit = require("express-rate-limit");
 const { checkCreditsOrThrow } = require("./services/billingService");
 
 const app = express();
+
+// Deve ser a primeira configuração — Railway usa proxy reverso
+app.set("trust proxy", 1);
+
 app.use(cors({
   origin: true,
   credentials: true
@@ -53,9 +57,6 @@ stripeWebhook(app, stripe, supabaseAdmin);
 
 // IMPORTANTE: vem DEPOIS do webhook
 app.use(express.json());
-
-// Railway usa proxy reverso — necessário para o rate limiting funcionar correctamente
-app.set("trust proxy", 1);
 
 const generateClipsLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
@@ -76,6 +77,15 @@ const jobStatusLimiter = rateLimit({
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
   max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many requests. Try again later." },
+});
+
+// Limiter separado para /upload-url (geração de URL, sem upload real)
+const uploadUrlLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Too many requests. Try again later." },
@@ -566,7 +576,7 @@ app.post("/upload", uploadLimiter, upload.single("video"), async (req, res) => {
 // ===============================
 // GENERATE SIGNED UPLOAD URL (R2)
 // ===============================
-app.post("/upload-url", uploadLimiter, async (req, res) => {
+app.post("/upload-url", uploadUrlLimiter, async (req, res) => {
 
   try {
 
