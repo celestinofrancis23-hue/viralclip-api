@@ -715,12 +715,12 @@ app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
 app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
   try {
     const { jobId } = req.params;
-    const { userId } = req.query;
+    const userId = req.query.userId || req.headers["x-user-id"];
 
     if (!userId) {
       return res.status(400).json({
         success: false,
-        error: "userId é obrigatório como query param (?userId=...)",
+        error: "userId é obrigatório via query param (?userId=...) ou header X-User-Id",
       });
     }
 
