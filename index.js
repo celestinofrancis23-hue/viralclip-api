@@ -232,19 +232,20 @@ function writeJobStatus(jobDir, status, extra = {}) {
   fs.writeFileSync(statusPath, JSON.stringify(data, null, 2));
 
   // Persistir no Supabase (fire-and-forget — não bloqueia o pipeline)
-  const row = {
-    jobId: jobId,
+  // Usa UPDATE em vez de UPSERT para não sobrescrever colunas NOT NULL
+  // (source_type, settings, etc.) que o frontend já preencheu na criação do job
+  const changes = {
     status,
     progress: extra.progress ?? null,
     output_payload: extra.clips ?? null,
     error_message: extra.error ?? null,
     updated_at: new Date().toISOString(),
   };
-  if (extra.userId) row.user_id = extra.userId;
 
   supabaseAdmin
     .from("clip_jobs")
-    .upsert(row, { onConflict: "jobId" })
+    .update(changes)
+    .eq("jobId", jobId)
     .then(() => {})
     .catch((err) => console.error("❌ Supabase writeJobStatus error:", err.message));
 }
