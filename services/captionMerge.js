@@ -71,7 +71,7 @@ function CaptionMerge(payload) {
     jobId,
     jobDir,
     transcript,
-    clips,
+    verticalClips: clips,
   };
 }
 
