@@ -392,6 +392,8 @@ writeJobStatus(jobDir, "generating clips", { progress: 80 });
       });
     }
 
+console.log("🎬 verticalResults antes do Caption:", JSON.stringify(verticalResults));
+
     // 8️⃣ Caption Engine
     const captionPayload = CaptionMerge({
       jobId,
