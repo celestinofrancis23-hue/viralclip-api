@@ -220,15 +220,33 @@ app.post("/billing/start", async (req, res) => {
 ====================================================== */
 function writeJobStatus(jobDir, status, extra = {}) {
   const statusPath = path.join(jobDir, "status.json");
+  const jobId = path.basename(jobDir);
 
   const data = {
     status,
-    progress: extra.progress ?? null, // 🔥 ADICIONADO
+    progress: extra.progress ?? null,
     ...extra,
     updatedAt: new Date().toISOString(),
   };
 
   fs.writeFileSync(statusPath, JSON.stringify(data, null, 2));
+
+  // Persistir no Supabase (fire-and-forget — não bloqueia o pipeline)
+  const row = {
+    job_id: jobId,
+    status,
+    progress: extra.progress ?? null,
+    clips: extra.clips ?? null,
+    error: extra.error ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  if (extra.userId) row.user_id = extra.userId;
+
+  supabaseAdmin
+    .from("clip_jobs")
+    .upsert(row, { onConflict: "job_id" })
+    .then(() => {})
+    .catch((err) => console.error("❌ Supabase writeJobStatus error:", err.message));
 }
 
 function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) {
@@ -722,36 +740,38 @@ app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
 /* ======================================================
    📡 GET /jobs/:jobId
 ====================================================== */
-app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
+app.get("/jobs/:jobId", jobStatusLimiter, async (req, res) => {
   try {
     const { jobId } = req.params;
 
-    const jobDir = path.join(BASE_TEMP_DIR, jobId);
-    const statusPath = path.join(jobDir, "status.json");
+    const { data, error } = await supabaseAdmin
+      .from("clip_jobs")
+      .select("status, progress, clips, error, updated_at")
+      .eq("job_id", jobId)
+      .maybeSingle();
 
-    if (!fs.existsSync(statusPath)) {
-      return res.status(404).json({
-        success: false,
-        error: "Job não encontrado",
-      });
+    if (error) {
+      console.error("❌ Supabase GET job error:", error);
+      return res.status(500).json({ success: false, error: "Erro interno" });
     }
 
-    const raw = fs.readFileSync(statusPath, "utf-8");
-    const statusData = JSON.parse(raw);
+    if (!data) {
+      return res.status(404).json({ success: false, error: "Job não encontrado" });
+    }
 
     return res.json({
       success: true,
       jobId,
-      ...statusData,
+      status: data.status,
+      progress: data.progress,
+      clips: data.clips,
+      error: data.error,
+      updatedAt: data.updated_at,
     });
 
   } catch (err) {
     console.error("❌ Erro ao buscar status:", err);
-
-    return res.status(500).json({
-      success: false,
-      error: "Erro interno",
-    });
+    return res.status(500).json({ success: false, error: "Erro interno" });
   }
 });
 
