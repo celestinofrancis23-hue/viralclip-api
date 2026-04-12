@@ -233,18 +233,18 @@ function writeJobStatus(jobDir, status, extra = {}) {
 
   // Persistir no Supabase (fire-and-forget — não bloqueia o pipeline)
   const row = {
-    job_id: jobId,
+    jobId: jobId,
     status,
     progress: extra.progress ?? null,
-    clips: extra.clips ?? null,
-    error: extra.error ?? null,
+    output_payload: extra.clips ?? null,
+    error_message: extra.error ?? null,
     updated_at: new Date().toISOString(),
   };
   if (extra.userId) row.user_id = extra.userId;
 
   supabaseAdmin
     .from("clip_jobs")
-    .upsert(row, { onConflict: "job_id" })
+    .upsert(row, { onConflict: "jobId" })
     .then(() => {})
     .catch((err) => console.error("❌ Supabase writeJobStatus error:", err.message));
 }
@@ -746,8 +746,8 @@ app.get("/jobs/:jobId", jobStatusLimiter, async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from("clip_jobs")
-      .select("status, progress, clips, error, updated_at")
-      .eq("job_id", jobId)
+      .select("status, progress, output_payload, error_message, updated_at")
+      .eq("jobId", jobId)
       .maybeSingle();
 
     if (error) {
@@ -764,8 +764,8 @@ app.get("/jobs/:jobId", jobStatusLimiter, async (req, res) => {
       jobId,
       status: data.status,
       progress: data.progress,
-      clips: data.clips,
-      error: data.error,
+      clips: data.output_payload,
+      error: data.error_message,
       updatedAt: data.updated_at,
     });
 
