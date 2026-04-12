@@ -54,6 +54,9 @@ stripeWebhook(app, stripe, supabaseAdmin);
 // IMPORTANTE: vem DEPOIS do webhook
 app.use(express.json());
 
+// Railway usa proxy reverso — necessário para o rate limiting funcionar correctamente
+app.set("trust proxy", 1);
+
 const generateClipsLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
   max: 20,
