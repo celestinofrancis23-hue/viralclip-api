@@ -723,6 +723,7 @@ app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
    📡 GET /jobs/:jobId
 ====================================================== */
 app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
+  console.log("[GET /jobs/:jobId] params:", req.params, "query:", req.query, "x-user-id header:", req.headers["x-user-id"] || "(ausente)");
   try {
     const { jobId } = req.params;
     const userId = req.query.userId || req.headers["x-user-id"];
