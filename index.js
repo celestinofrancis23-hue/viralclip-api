@@ -34,7 +34,9 @@ const { CaptionEngine } = require("./services/captionEngines");
 
 const uploadToR2 = require("./services/r2Uploader");
 const ClipThumbnailWorker = require("./workers/ClipThumbnailWorker");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner")
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const rateLimit = require("express-rate-limit");
+const { checkCreditsOrThrow } = require("./services/billingService");
 
 const app = express();
 app.use(cors({
@@ -51,6 +53,30 @@ stripeWebhook(app, stripe, supabaseAdmin);
 
 // IMPORTANTE: vem DEPOIS do webhook
 app.use(express.json());
+
+const generateClipsLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many requests. Try again later." },
+});
+
+const jobStatusLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many requests. Try again later." },
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many requests. Try again later." },
+});
 
 app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
@@ -468,7 +494,7 @@ const r2 = new S3Client({
   },
 });
 
-app.post("/upload", upload.single("video"), async (req, res) => {
+app.post("/upload", uploadLimiter, upload.single("video"), async (req, res) => {
   try {
 
     if (!req.file) {
@@ -537,7 +563,7 @@ app.post("/upload", upload.single("video"), async (req, res) => {
 // ===============================
 // GENERATE SIGNED UPLOAD URL (R2)
 // ===============================
-app.post("/upload-url", async (req, res) => {
+app.post("/upload-url", uploadLimiter, async (req, res) => {
 
   try {
 
@@ -624,21 +650,25 @@ app.post("/upload-url", async (req, res) => {
    📡 POST /generate-clips
    RESPONDE IMEDIATAMENTE
 ====================================================== */
-app.post("/generate-clips", async (req, res) => {
+app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
   try {
     const job = req.body;
 
     validateJobContract(job);
 
     const jobId = job.jobId;
+    const userId = job.userId;
     const jobDir = path.join(BASE_TEMP_DIR, jobId);
+
+    // Verificar créditos antes de iniciar o pipeline (sem descontar — o frontend já descontou)
+    await checkCreditsOrThrow(supabaseAdmin, userId, job.settings.clipCount);
 
     if (!fs.existsSync(jobDir)) {
       fs.mkdirSync(jobDir, { recursive: true });
     }
 
-    // STATUS INICIAL
-    writeJobStatus(jobDir, "queued");
+    // STATUS INICIAL (userId guardado para verificação posterior)
+    writeJobStatus(jobDir, "queued", { userId });
 
     // 🔥 RESPONDE IMEDIATAMENTE
     res.json({
@@ -653,6 +683,21 @@ app.post("/generate-clips", async (req, res) => {
   } catch (err) {
     console.error("❌ Erro no endpoint:", err);
 
+    const billingCodes = [
+      "insufficient_credits",
+      "no_active_subscription",
+      "billing_error",
+      "not_allowed",
+    ];
+    if (billingCodes.includes(err.code) || billingCodes.includes(err.message)) {
+      return res.status(402).json({
+        success: false,
+        error: "billing_error",
+        code: err.code || err.message,
+        remaining: err.remaining ?? null,
+      });
+    }
+
     return res.status(400).json({
       success: false,
       error: err.message,
@@ -664,9 +709,18 @@ app.post("/generate-clips", async (req, res) => {
 /* ======================================================
    📡 GET /jobs/:jobId
 ====================================================== */
-app.get("/jobs/:jobId", (req, res) => {
+app.get("/jobs/:jobId", jobStatusLimiter, (req, res) => {
   try {
     const { jobId } = req.params;
+    const { userId } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId é obrigatório como query param (?userId=...)",
+      });
+    }
+
     const jobDir = path.join(BASE_TEMP_DIR, jobId);
     const statusPath = path.join(jobDir, "status.json");
 
@@ -679,6 +733,13 @@ app.get("/jobs/:jobId", (req, res) => {
 
     const raw = fs.readFileSync(statusPath, "utf-8");
     const statusData = JSON.parse(raw);
+
+    if (statusData.userId && statusData.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: "Acesso negado",
+      });
+    }
 
     return res.json({
       success: true,

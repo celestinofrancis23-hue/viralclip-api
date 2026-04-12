@@ -13,6 +13,13 @@ function validateJobContract(job) {
   }
 
   // ======================
+  // userId
+  // ======================
+  if (!job.userId || typeof job.userId !== "string") {
+    throw new Error("userId é obrigatório e deve ser string");
+  }
+
+  // ======================
   // source
   // ======================
   if (!job.source || typeof job.source !== "object") {

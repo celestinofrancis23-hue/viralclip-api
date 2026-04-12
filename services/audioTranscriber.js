@@ -124,7 +124,7 @@ try:
         task="transcribe",
         beam_size=1,
         best_of=1,
-        word_timestamps=False,
+        word_timestamps=True,
         vad_filter=True
     )
 
@@ -135,10 +135,20 @@ try:
 
     count = 0
     for seg in segments:
+        words = []
+        if seg.words:
+            for w in seg.words:
+                words.append({
+                    "word": (w.word or "").strip(),
+                    "start": float(w.start),
+                    "end": float(w.end),
+                    "probability": float(w.probability)
+                })
         output["segments"].append({
             "start": float(seg.start),
             "end": float(seg.end),
-            "text": (seg.text or "").strip()
+            "text": (seg.text or "").strip(),
+            "words": words
         })
         count += 1
 
