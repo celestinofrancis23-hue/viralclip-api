@@ -1,8 +1,9 @@
-const { NormalizerWorker } = require("../workers/normalizer.worker");
-const { HighlightWorker } = require("../workers/highlight.worker");
-const { StyleWorker } = require("../workers/style.worker");
-const { AssWorker } = require("../workers/ass.worker");
-const { RenderWorker } = require("../workers/render.worker");
+const { NormalizerWorker } = require("../../workers/normalizer.worker");
+const { HighlightWorker }  = require("../../workers/highlight.worker");
+const { StyleWorker }      = require("../../workers/style.worker");
+const { AssWorker }        = require("../../workers/ass.worker");
+const { RenderWorker }     = require("../../workers/render.worker");
+
 
 async function CaptionEngine(payload) {
   const { jobId, jobDir, userId, transcript, verticalClips } = payload;
