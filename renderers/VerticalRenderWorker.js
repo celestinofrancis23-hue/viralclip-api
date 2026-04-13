@@ -52,6 +52,7 @@ module.exports = async function VerticalRenderWorker({
       ].join(",");
 
       console.log(`🎯 [VerticalRender] Modo dinâmico — ${cropPath.length} keyframes`);
+      console.log(`[VerticalRender] vf (primeiros 300 chars): ${vf.slice(0, 300)}`);
 
     } else if (hasLegacyCrop) {
       // ── Modo legado: crop estático ────────────────────────────────────
@@ -104,15 +105,24 @@ module.exports = async function VerticalRenderWorker({
       outputPath
     );
 
+    // Log do comando completo para debug
+    console.log("[VerticalRenderWorker] ffmpeg", args.map(a =>
+      a.length > 120 ? a.slice(0, 120) + "…" : a
+    ).join(" "));
+
     const ff = spawn("ffmpeg", args);
 
-    ff.stderr.on("data", () => {}); // silêncio — activar em debug
+    let stderrBuf = "";
+    ff.stderr.on("data", (d) => { stderrBuf += d.toString(); });
 
     ff.on("error", reject);
 
     ff.on("close", (code) => {
       if (code !== 0) {
-        return reject(new Error("[VerticalRenderWorker] FFmpeg falhou"));
+        // Extrair as últimas linhas relevantes do stderr (evitar flood)
+        const tail = stderrBuf.split("\n").slice(-20).join("\n");
+        console.error("[VerticalRenderWorker] FFmpeg stderr (últimas 20 linhas):\n" + tail);
+        return reject(new Error(`[VerticalRenderWorker] FFmpeg saiu com code ${code}\n${tail}`));
       }
 
       if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 1000) {
