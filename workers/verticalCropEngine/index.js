@@ -1,116 +1,130 @@
 // workers/verticalCropEngine/index.js
+//
+// Orquestrador do pipeline de crop vertical.
+// Fluxo:
+//   transcript → speaker timeline → face detection → motion energy
+//   → visual focus → crop path (suavizado) → zoom curve → render dinâmico
+
+const { spawnSync } = require("child_process");
 
 const TranscriptWindowResolver = require("./resolvers/TranscriptWindowResolver");
-
-const SpeakerTimelineAnalyzer = require("./analyzers/SpeakerTimelineAnalyzer");
-const FaceDominanceAnalyzer = require("./analyzers/FaceDominanceAnalyzer");
-const MotionEnergyAnalyzer = require("./analyzers/MotionEnergyAnalyzer");
-const VisualFocusRanker = require("./analyzers/VisualFocusRanker");
-
-const CropPathWalker = require("./analyzers//CropPathWalker");
-const ZoomCurveWalker = require("./analyzers//ZoomCurveWalker");
-
-const VerticalRenderWorker = require("./analyzers//VerticalRenderWorker");
+const SpeakerTimelineAnalyzer  = require("./analyzers/SpeakerTimelineAnalyzer");
+const FaceDominanceAnalyzer    = require("./analyzers/FaceDominanceAnalyzer");
+const MotionEnergyAnalyzer     = require("./analyzers/MotionEnergyAnalyzer");
+const VisualFocusRanker        = require("./analyzers/VisualFocusRanker");
+const CropPathWalker           = require("./analyzers/CropPathWalker");
+const ZoomCurveWalker          = require("./analyzers/ZoomCurveWalker");
+const VerticalRenderWorker     = require("./analyzers/VerticalRenderWorker");
 
 module.exports = async function VerticalCropEngine({
   clipPath,
   clipStart,
   clipEnd,
-  transcriptSegments,
-  clipIndex,
+  transcriptSegments = [],
+  outputPath,
+  clipIndex = 0,
   jobId,
   jobDir
 }) {
   console.log(`🎥 [VerticalCropEngine] Clip ${clipIndex} iniciado`);
 
-const result = await VerticalCropEngine({
-  clipPath: inputClipPath,
-  outputPath: outputClipPath,
+  // Defaults: se não fornecidos, probar duração do vídeo
+  if (clipStart == null) clipStart = 0;
+  if (clipEnd   == null) clipEnd   = getVideoDuration(clipPath) || 30;
 
-  // 👇 mock de janela do clipe
-  clipStart: 0,
-  clipEnd: 40,
+  const clipDuration = clipEnd - clipStart;
 
-  transcriptSegments
-});
-
-  // ===============================
-  // 1️⃣ Resolver transcript do clip
-  // ===============================
+  // ── 1. Resolver transcript do clip ──────────────────────────────────────
   const { clipTranscriptSegments } = TranscriptWindowResolver({
     clipStart,
     clipEnd,
     transcriptSegments
   });
 
-  // ===============================
-  // 2️⃣ Linha do tempo de fala
-  // ===============================
-  const speakerTimeline = SpeakerTimelineAnalyzer({
-    transcriptSegments: clipTranscriptSegments,
-    clipDuration: clipEnd - clipStart
+  // ── 2. Linha do tempo de fala ────────────────────────────────────────────
+  const { speakerTimeline } = SpeakerTimelineAnalyzer({
+    clipTranscriptSegments,
+    clipDuration
   });
 
-  // ===============================
-  // 3️⃣ Dominância facial
-  // ===============================
-  const faceDominanceTimeline = await FaceDominanceAnalyzer({
-    clipPath,
+  // ── 3. Detecção de rosto dominante (real, via MediaPipe) ─────────────────
+  const {
+    faceTimeline,
+    videoWidth,
+    videoHeight
+  } = await FaceDominanceAnalyzer({
+    videoPath: clipPath,
+    clipDuration,
     speakerTimeline
   });
 
-  // ===============================
-  // 4️⃣ Energia de movimento
-  // ===============================
-  const motionEnergyTimeline = await MotionEnergyAnalyzer({
-    clipPath
+  // ── 4. Energia de movimento ───────────────────────────────────────────────
+  const { motionTimeline } = await MotionEnergyAnalyzer({
+    videoPath: clipPath,
+    clipDuration
   });
 
-  // ===============================
-  // 5️⃣ Rankear foco visual
-  // ===============================
-  const visualFocusTimeline = VisualFocusRanker({
+  // ── 5. Rankear foco visual ────────────────────────────────────────────────
+  const { visualFocusTimeline } = VisualFocusRanker({
     speakerTimeline,
-    faceDominanceTimeline,
-    motionEnergyTimeline
+    faceTimeline,
+    motionTimeline
   });
 
-  // ===============================
-  // 6️⃣ Caminho de crop (x, y, w, h)
-  // ===============================
-  const cropPath = CropPathWalker({
-    visualFocusTimeline,
-    clipDuration: clipEnd - clipStart
+  // ── 6. Caminho de crop com tracking suavizado (EMA + SMA + dead zone) ────
+  const { cropPath } = CropPathWalker({
+    faceTimeline,           // tracking de rosto frame a frame
+    clipDuration,
+    sourceWidth:  videoWidth,
+    sourceHeight: videoHeight
   });
 
-  // ===============================
-  // 7️⃣ Curva de zoom (cinematográfico)
-  // ===============================
-  const zoomCurve = ZoomCurveWalker({
-    speakerTimeline,
-    motionEnergyTimeline
-  });
-
-  // ===============================
-  // 8️⃣ Render vertical final
-  // ===============================
-  const verticalClipPath = await VerticalRenderWorker({
-    clipPath,
+  // ── 7. Curva de zoom cinematográfico ─────────────────────────────────────
+  const { zoomPath } = ZoomCurveWalker({
     cropPath,
-    zoomCurve,
-    clipIndex,
-    jobId,
-    jobDir
+    visualFocusTimeline,
+    clipDuration
   });
 
-  console.log(`✅ [VerticalCropEngine] Clip ${clipIndex} finalizado`);
+  // ── 8. Render vertical dinâmico ───────────────────────────────────────────
+  const verticalClipPath = outputPath || clipPath.replace(/\.mp4$/i, "_vertical.mp4");
+
+  await VerticalRenderWorker({
+    inputVideoPath:  clipPath,
+    outputVideoPath: verticalClipPath,
+    cropPath,
+    zoomPath
+  });
+
+  console.log(`✅ [VerticalCropEngine] Clip ${clipIndex} finalizado → ${verticalClipPath}`);
 
   return {
     verticalClipPath,
     cropMetadata: {
       cropPath,
-      zoomCurve,
-      speakerTimeline
+      zoomPath,
+      speakerTimeline,
+      faceTimeline
     }
   };
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getVideoDuration(videoPath) {
+  try {
+    const result = spawnSync("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "csv=p=0",
+      videoPath
+    ]);
+
+    if (result.error || result.status !== 0) return null;
+
+    const dur = parseFloat(result.stdout.toString().trim());
+    return isNaN(dur) ? null : dur;
+  } catch {
+    return null;
+  }
+}

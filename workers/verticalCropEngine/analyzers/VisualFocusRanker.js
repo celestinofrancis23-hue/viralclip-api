@@ -1,57 +1,73 @@
 // workers/verticalCropEngine/analyzers/VisualFocusRanker.js
+//
+// Combina faceTimeline, motionTimeline e speakerTimeline para determinar
+// o tipo de foco visual em cada momento do clip.
+// Output usado pelo ZoomCurveWalker para definir o nível de zoom.
 
 module.exports = function VisualFocusRanker({
   speakerTimeline = [],
-  faceTimeline = [],
-  motionTimeline = []
+  faceTimeline    = [],   // [{time, center:{x,y}, faceBox, confidence}]
+  motionTimeline  = []    // [{time, energy}]
 }) {
   const events = [];
 
-  // ============================
-  // 1️⃣ Normalizar eventos de FACE
-  // ============================
-  for (const face of faceTimeline) {
+  // ────────────────────────────────────────────────────────────────────────
+  // 1. Converter faceTimeline per-frame → segmentos com start/end
+  // ────────────────────────────────────────────────────────────────────────
+  for (let i = 0; i < faceTimeline.length; i++) {
+    const cur  = faceTimeline[i];
+    const next = faceTimeline[i + 1];
+
+    if (!cur || !cur.center) continue;
+
+    const start = cur.time;
+    const end   = next ? next.time : start + 0.5;
+
     events.push({
-      start: face.start,
-      end: face.end,
-      type: "face",
-      center: bboxCenter(face.bbox),
-      bbox: face.bbox,
-      confidence: face.dominanceScore,
-      reason: ["face_dominant"]
+      start,
+      end,
+      type:       "face",
+      center:     cur.center,
+      bbox:       cur.faceBox || null,
+      confidence: cur.confidence || 0.8,
+      reason:     ["face_detected"]
     });
   }
 
-  // ============================
-  // 2️⃣ Normalizar eventos de MOTION
-  // ============================
-  for (const motion of motionTimeline) {
+  // ────────────────────────────────────────────────────────────────────────
+  // 2. Normalizar eventos de motion
+  // ────────────────────────────────────────────────────────────────────────
+  for (let i = 0; i < motionTimeline.length; i++) {
+    const cur  = motionTimeline[i];
+    const next = motionTimeline[i + 1];
+
+    if (!cur) continue;
+
     events.push({
-      start: motion.start,
-      end: motion.end,
-      type: "motion",
-      center: motion.center,
-      bbox: null,
-      confidence: motion.energy,
-      reason: ["motion_energy"]
+      start:      cur.time,
+      end:        next ? next.time : cur.time + 0.2,
+      type:       "motion",
+      center:     { x: 0.5, y: 0.5 },
+      bbox:       null,
+      confidence: normaliseEnergy(cur.energy),
+      reason:     ["motion_energy"]
     });
   }
 
-  // ============================
-  // 3️⃣ Ordenar eventos no tempo
-  // ============================
+  // ────────────────────────────────────────────────────────────────────────
+  // 3. Ordenar por tempo
+  // ────────────────────────────────────────────────────────────────────────
   events.sort((a, b) => a.start - b.start);
 
-  // ============================
-  // 4️⃣ Construir foco contínuo
-  // ============================
+  // ────────────────────────────────────────────────────────────────────────
+  // 4. Construir foco visual contínuo (prioridade: face+fala > face > motion)
+  // ────────────────────────────────────────────────────────────────────────
   const visualFocusTimeline = [];
   let lastFocus = null;
 
   for (const event of events) {
-    const isSpeaking = isSpeakingAt(
-      event.start,
-      speakerTimeline
+    const isSpeaking = speakerTimeline.some(
+      s => event.start >= s.start && event.start <= s.end
     );
 
     let priority = 0;
@@ -65,15 +81,15 @@ module.exports = function VisualFocusRanker({
       priority = 1;
     }
 
-    if (!lastFocus || priority > lastFocus.priority) {
+    if (!lastFocus || priority >= lastFocus.priority) {
       const focus = {
-        start: event.start,
-        end: event.end,
-        focusType: event.type,
-        center: event.center,
-        bbox: event.bbox,
+        start:      event.start,
+        end:        event.end,
+        focusType:  event.type,
+        center:     event.center,
+        bbox:       event.bbox,
         confidence: clamp(event.confidence),
-        reason: event.reason,
+        reason:     event.reason,
         priority
       };
 
@@ -82,35 +98,23 @@ module.exports = function VisualFocusRanker({
     }
   }
 
-  // ============================
-  // 5️⃣ Limpar overlaps e ajustar
-  // ============================
+  // ────────────────────────────────────────────────────────────────────────
+  // 5. Limpar e normalizar overlaps
+  // ────────────────────────────────────────────────────────────────────────
   return {
     visualFocusTimeline: normalizeTimeline(visualFocusTimeline)
   };
 };
 
-/* =========================================================
-   🔧 Helpers
-========================================================= */
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-function isSpeakingAt(time, speakerTimeline) {
-  return speakerTimeline.some(
-    s => time >= s.start && time <= s.end
-  );
-}
-
-function bboxCenter(bbox) {
-  if (!bbox) return { x: 0.5, y: 0.5 };
-
-  return {
-    x: bbox.x + bbox.width / 2,
-    y: bbox.y + bbox.height / 2
-  };
+function normaliseEnergy(energy) {
+  // energia raw dos bytes do frame — normalizar para [0,1]
+  return clamp(energy / 100);
 }
 
 function clamp(v) {
-  return Math.max(0, Math.min(1, v));
+  return Math.max(0, Math.min(1, v || 0));
 }
 
 function normalizeTimeline(timeline) {
@@ -124,11 +128,8 @@ function normalizeTimeline(timeline) {
       last.focusType === block.focusType &&
       distance(last.center, block.center) < 0.05
     ) {
-      last.end = block.end;
-      last.confidence = Math.max(
-        last.confidence,
-        block.confidence
-      );
+      last.end        = block.end;
+      last.confidence = Math.max(last.confidence, block.confidence);
     } else {
       result.push({ ...block });
     }
@@ -138,5 +139,6 @@ function normalizeTimeline(timeline) {
 }
 
 function distance(a, b) {
+  if (!a || !b) return 1;
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
