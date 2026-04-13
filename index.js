@@ -12,6 +12,7 @@ const upload = multer({
 });
 
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { spawnSync } = require("child_process");
 
 function safeMkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -25,9 +26,8 @@ const audioTranscriber = require("./services/audioTranscriber");
 const { analyzeViralMoments } = require("./services/aiAnalyzer");
 const ClipAssembler = require("./workers/ClipAssembler");
 const faceDetectionWorker = require("./workers/faceDetectionWorker");
-const FaceDominanceAnalyzer = require("./workers/faceDominanceAnalyzer");
-const FixedVerticalCropBuilder = require("./workers/FixedVerticalCropBuilder");
-const VerticalRenderWorker = require("./workers/verticalRenderWorker");
+const CropPathWalker = require("./workers/verticalCropEngine/analyzers/CropPathWalker");
+const VerticalRenderWorker = require("./renderers/VerticalRenderWorker");
 const CaptionMerge = require("./services/captionMerge");
 // CORRETO
 const { CaptionEngine } = require("./services/captionEngines");
@@ -407,20 +407,15 @@ writeJobStatus(jobDir, "generating clips", { progress: 60 });
 
 writeJobStatus(jobDir, "generating clips", { progress: 70 });
 
-    // 6️⃣ Face Detection
+    // 6️⃣ Face Detection (per-frame, vídeo completo)
     const faceStats = await faceDetectionWorker({ videoPath });
+    const allFrames = faceStats.frames || [];
 
-const dominance = FaceDominanceAnalyzer({
-  frames: faceStats.frames || [],
-});
+    // Dimensões reais do vídeo (via ffprobe)
+    const { videoWidth, videoHeight } = probeVideoDimensions(videoPath);
+    console.log(`📐 Vídeo: ${videoWidth}x${videoHeight}`);
 
-const crop = FixedVerticalCropBuilder({
-  dominantFace: dominance?.dominantFace || null,
-  videoWidth: 1920,
-  videoHeight: 1080,
-});
-
-    // 7️⃣ Vertical Render
+    // 7️⃣ Vertical Render com tracking dinâmico por clip
     const verticalResults = [];
     const verticalDir = path.join(jobDir, "vertical");
 
@@ -436,10 +431,31 @@ writeJobStatus(jobDir, "generating clips", { progress: 80 });
         `vertical_${clip.clipIndex}.mp4`
       );
 
+      const clipDuration = clip.endTime - clip.startTime;
+
+      // Filtrar frames dentro do intervalo deste clip e ajustar para tempo relativo
+      const clipFrames = allFrames
+        .filter(f => f.time >= clip.startTime && f.time <= clip.endTime)
+        .map(f => ({ ...f, time: Math.round((f.time - clip.startTime) * 1000) / 1000 }));
+
+      // Converter para faceTimeline normalizada com EMA
+      const faceTimeline = buildFaceTimeline(clipFrames, videoWidth, videoHeight);
+
+      // Calcular cropPath suavizado (EMA + SMA + dead zone + speed limit)
+      const { cropPath } = CropPathWalker({
+        faceTimeline,
+        clipDuration,
+        sourceWidth:  videoWidth,
+        sourceHeight: videoHeight,
+      });
+
+      console.log(`🎯 Clip ${clip.clipIndex}: ${cropPath.length} keyframes de crop dinâmico`);
+
       await VerticalRenderWorker({
-        inputPath: clip.clipPath,
+        inputPath:  clip.clipPath,
         outputPath: verticalClipPath,
-        crop,
+        cropPath,
+        start: 0,
       });
 
       verticalResults.push({
@@ -771,6 +787,92 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+/* ======================================================
+   🔧 HELPERS — face timeline + video probe
+====================================================== */
+
+/**
+ * Obtém as dimensões reais do vídeo via ffprobe.
+ */
+function probeVideoDimensions(videoPath) {
+  try {
+    const result = spawnSync("ffprobe", [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries", "stream=width,height",
+      "-of", "csv=s=x:p=0",
+      videoPath,
+    ]);
+
+    if (result.error || result.status !== 0) {
+      return { videoWidth: 1920, videoHeight: 1080 };
+    }
+
+    const [w, h] = result.stdout.toString().trim().split("x").map(Number);
+    return {
+      videoWidth:  (w && w > 0) ? w : 1920,
+      videoHeight: (h && h > 0) ? h : 1080,
+    };
+  } catch {
+    return { videoWidth: 1920, videoHeight: 1080 };
+  }
+}
+
+/**
+ * Converte frames da detecção Haar (pixel coords) →
+ * faceTimeline normalizada [0-1] com EMA para suavizar.
+ *
+ * @param {Array}  frames       — [{time, faces:[{x,y,w,h,confidence}]}]
+ * @param {number} videoWidth
+ * @param {number} videoHeight
+ */
+function buildFaceTimeline(frames, videoWidth, videoHeight) {
+  const EMA_ALPHA = 0.3;
+  let emaX = null;
+  let emaY = null;
+
+  return frames.map(({ time, faces }) => {
+    // escolher o rosto maior (maior área)
+    const bestFace = (faces || []).reduce((best, f) => {
+      const area = f.w * f.h;
+      return (!best || area > best.w * best.h) ? f : best;
+    }, null);
+
+    // normalizar coordenadas para [0-1]
+    let cx = 0.5;
+    let cy = 0.3;
+
+    if (bestFace) {
+      cx = (bestFace.x + bestFace.w / 2) / videoWidth;
+      cy = (bestFace.y + bestFace.h / 2) / videoHeight;
+    }
+
+    // EMA smoothing
+    if (emaX === null) {
+      emaX = cx;
+      emaY = cy;
+    } else {
+      emaX = EMA_ALPHA * cx + (1 - EMA_ALPHA) * emaX;
+      emaY = EMA_ALPHA * cy + (1 - EMA_ALPHA) * emaY;
+    }
+
+    return {
+      time,
+      center: {
+        x: Math.round(emaX * 10000) / 10000,
+        y: Math.round(emaY * 10000) / 10000,
+      },
+      faceBox: bestFace ? {
+        x: bestFace.x / videoWidth,
+        y: bestFace.y / videoHeight,
+        w: bestFace.w / videoWidth,
+        h: bestFace.h / videoHeight,
+      } : null,
+      confidence: bestFace ? (bestFace.confidence || 1) : 0,
+    };
+  });
+}
 
 /* ======================================================
    🚀 START SERVER
