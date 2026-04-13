@@ -63,7 +63,32 @@ async function checkCreditsOrThrow(supabaseAdmin, userId, cost = 1) {
   return { ok: true, remaining };
 }
 
+// Verifica apenas se o utilizador tem subscrição activa, sem contar créditos.
+// Usar quando o frontend já descontou os créditos e o backend só precisa
+// de confirmar que o utilizador tem acesso.
+async function checkSubscriptionOrThrow(supabaseAdmin, userId) {
+  const { data, error } = await supabaseAdmin
+    .from("subscriptions")
+    .select("status")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("❌ checkSubscriptionOrThrow query error:", error);
+    throw new Error("billing_error");
+  }
+
+  if (!data || data.status !== "active") {
+    const e = new Error("no_active_subscription");
+    e.code = "no_active_subscription";
+    throw e;
+  }
+
+  return { ok: true };
+}
+
 module.exports = {
   consumeCreditsOrThrow,
   checkCreditsOrThrow,
+  checkSubscriptionOrThrow,
 };

@@ -36,7 +36,7 @@ const uploadToR2 = require("./services/r2Uploader");
 const ClipThumbnailWorker = require("./workers/ClipThumbnailWorker");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const rateLimit = require("express-rate-limit");
-const { checkCreditsOrThrow } = require("./services/billingService");
+const { checkSubscriptionOrThrow } = require("./services/billingService");
 
 const app = express();
 
@@ -663,8 +663,8 @@ app.post("/generate-clips", generateClipsLimiter, async (req, res) => {
     const userId = job.userId;
     const jobDir = path.join(BASE_TEMP_DIR, jobId);
 
-    // Verificar créditos antes de iniciar o pipeline (sem descontar — o frontend já descontou)
-    await checkCreditsOrThrow(supabaseAdmin, userId, job.settings.clipCount);
+    // Verificar subscrição activa (o frontend já descontou os créditos)
+    await checkSubscriptionOrThrow(supabaseAdmin, userId);
 
     if (!fs.existsSync(jobDir)) {
       fs.mkdirSync(jobDir, { recursive: true });
