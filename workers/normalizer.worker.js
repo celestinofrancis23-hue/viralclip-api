@@ -24,7 +24,7 @@ async function NormalizerWorker({ clip, transcript }) {
   });
 
   const valid = segments.filter((s) => s.end > s.start && s.text.length > 0);
-  const normalized = splitLongSegments(valid);
+  const normalized = splitLongSegments(valid, 6); // máx 6 palavras = 2 linhas × 3 palavras
 
   return { segments: normalized };
 }
