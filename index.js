@@ -517,6 +517,11 @@ writeJobStatus(jobDir, "clips ready", {
 // R2 UPLOAD ENDPOINT (/upload)
 // ===============================
 
+console.log("[R2 INIT] R2_ENDPOINT:", process.env.R2_ENDPOINT || "(não definido)");
+console.log("[R2 INIT] R2_BUCKET_NAME:", process.env.R2_BUCKET_NAME || "(não definido)");
+console.log("[R2 INIT] R2_ACCESS_KEY_ID:", process.env.R2_ACCESS_KEY_ID ? "✅ definido" : "❌ ausente");
+console.log("[R2 INIT] R2_SECRET_ACCESS_KEY:", process.env.R2_SECRET_ACCESS_KEY ? "✅ definido" : "❌ ausente");
+
 const r2 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT,
@@ -596,86 +601,52 @@ app.post("/upload", uploadLimiter, upload.single("video"), async (req, res) => {
 // GENERATE SIGNED UPLOAD URL (R2)
 // ===============================
 app.post("/upload-url", uploadUrlLimiter, async (req, res) => {
+  console.log("[upload-url] pedido recebido — body:", JSON.stringify(req.body || {}));
 
   try {
-
     const { userId, jobId } = req.body || {};
 
-    // -------------------------
-    // Validate payload
-    // -------------------------
+    console.log("[upload-url] userId:", userId || "(ausente)", "| jobId:", jobId || "(ausente)");
+
     if (!userId || !jobId) {
-      return res.status(400).json({
-        ok: false,
-        error: "missing userId or jobId"
-      });
+      return res.status(400).json({ ok: false, error: "missing userId or jobId" });
     }
 
-    const uuidRegex =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-
+    // Aceita qualquer UUID válido (v1-v7)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(jobId)) {
-      return res.status(400).json({
-        ok: false,
-        error: "invalid jobId format"
-      });
+      console.warn("[upload-url] jobId rejeitado pelo regex:", jobId);
+      return res.status(400).json({ ok: false, error: "invalid jobId format" });
     }
 
-    // -------------------------
-    // Validate env
-    // -------------------------
     const bucket = process.env.R2_BUCKET_NAME;
-
     if (!bucket) {
-      console.error("❌ Missing env R2_BUCKET_NAME");
-
-      return res.status(500).json({
-        ok: false,
-        error: "server configuration error"
-      });
+      console.error("[upload-url] ❌ R2_BUCKET_NAME não definido");
+      return res.status(500).json({ ok: false, error: "server configuration error" });
     }
 
-    // -------------------------
-    // Build object key
-    // -------------------------
     const key = `uploads/${userId}/${jobId}/source.mp4`;
+    console.log("[upload-url] a gerar signed URL para key:", key);
 
-    // -------------------------
-    // Create signed upload command
-    // -------------------------
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
-      ContentType: "video/mp4"
+      ContentType: "video/mp4",
     });
 
-    // -------------------------
-    // Generate signed URL
-    // -------------------------
-    const uploadUrl = await getSignedUrl(r2, command, {
-      expiresIn: 600 // 10 minutes
-    });
+    console.log("[upload-url] PutObjectCommand criado — a chamar getSignedUrl...");
 
-    console.log("✅ Signed upload URL generated:", key);
+    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 600 });
 
-    return res.status(200).json({
-      ok: true,
-      uploadUrl,
-      key
-    });
+    console.log("[upload-url] ✅ signed URL gerada com sucesso");
+
+    return res.status(200).json({ ok: true, uploadUrl, key });
 
   } catch (err) {
-
-    console.error("❌ upload-url endpoint error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      error: "failed to generate upload url"
-    });
-
+    console.error("[upload-url] ❌ erro:", err.name, "|", err.message);
+    console.error("[upload-url] stack:", err.stack);
+    return res.status(500).json({ ok: false, error: "failed to generate upload url", detail: err.message });
   }
-
 });
 
 /* ======================================================
@@ -789,6 +760,14 @@ app.get('/debug/video/:jobId', (req, res) => {
   }
 
   res.sendFile(videoPath);
+});
+
+// Apanha qualquer erro não tratado antes que mate o processo
+process.on("uncaughtException", (err) => {
+  console.error("💥 uncaughtException:", err.message, err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("💥 unhandledRejection:", reason);
 });
 
 const PORT = process.env.PORT || 3000;
