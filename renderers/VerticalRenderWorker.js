@@ -41,17 +41,24 @@ module.exports = async function VerticalRenderWorker({
       const endTime   = cropPath[cropPath.length - 1].time;
       duration = end != null ? (end - start) : (endTime - startTime);
 
-      const xExpr = buildPiecewiseExpr(cropPath, p => p.crop.x);
-      const yExpr = buildPiecewiseExpr(cropPath, p => p.crop.y);
-      const cw    = cropPath[0].crop.width;
-      const ch    = cropPath[0].crop.height;
+      // Subamostrar para máx. 12 keyframes — expressões mais curtas,
+      // menos risco de rejeição pelo parser do FFmpeg
+      const kf = subsampleCropPath(cropPath, 12);
 
-      vf = [
-        `crop=${cw}:${ch}:${xExpr}:${yExpr}`,
-        `scale=${targetWidth}:${targetHeight}:flags=lanczos`
-      ].join(",");
+      const cw = kf[0].crop.width;
+      const ch = kf[0].crop.height;
 
-      console.log(`🎯 [VerticalRender] Modo dinâmico — ${cropPath.length} keyframes`);
+      // Construir expressões e escapar vírgulas para o parser do FFmpeg.
+      // O FFmpeg usa ',' para separar filtros no -vf; dentro de valores
+      // de opções (e.g. x= de crop=) as vírgulas devem ser '\,' para não
+      // serem interpretadas como separadores de filtros.
+      const xExpr = escapeFilterCommas(buildPiecewiseExpr(kf, p => p.crop.x));
+      const yExpr = escapeFilterCommas(buildPiecewiseExpr(kf, p => p.crop.y));
+
+      // A vírgula entre crop e scale NÃO é escapada — é o separador de filtros
+      vf = `crop=${cw}:${ch}:${xExpr}:${yExpr},scale=${targetWidth}:${targetHeight}`;
+
+      console.log(`🎯 [VerticalRender] Modo dinâmico — ${kf.length} keyframes (de ${cropPath.length})`);
       console.log(`[VerticalRender] vf (primeiros 300 chars): ${vf.slice(0, 300)}`);
 
     } else if (hasLegacyCrop) {
@@ -137,6 +144,35 @@ module.exports = async function VerticalRenderWorker({
 // ─────────────────────────────────────────────────────────────────────────────
 //  Expressão de interpolação linear por peças (mesma lógica do engine)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Escapa vírgulas para o parser interno do FFmpeg.
+ * Dentro de um valor de opção de filtro (e.g. o "x" de crop=w:h:x:y),
+ * as vírgulas fazem parte das chamadas de função (if, lt, etc.) mas o
+ * FFmpeg v3+ trata-as como separadores de filtros se não forem escapadas.
+ * A solução correcta é substituir "," por "\," no valor da expressão.
+ */
+function escapeFilterCommas(expr) {
+  return expr.replace(/,/g, "\\,");
+}
+
+/**
+ * Reduz o cropPath para no máximo maxPoints keyframes uniformemente espaçados,
+ * garantindo que o primeiro e último são sempre incluídos.
+ */
+function subsampleCropPath(cropPath, maxPoints) {
+  if (cropPath.length <= maxPoints) return cropPath;
+
+  const result = [cropPath[0]];
+  const step   = (cropPath.length - 1) / (maxPoints - 1);
+
+  for (let i = 1; i < maxPoints - 1; i++) {
+    result.push(cropPath[Math.round(i * step)]);
+  }
+
+  result.push(cropPath[cropPath.length - 1]);
+  return result;
+}
 
 function buildPiecewiseExpr(cropPath, getValue) {
   const pts = cropPath;
