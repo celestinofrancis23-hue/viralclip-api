@@ -1,6 +1,4 @@
 const { NormalizerWorker } = require("../../workers/normalizer.worker");
-const { HighlightWorker }  = require("../../workers/highlight.worker");
-const { StyleWorker }      = require("../../workers/style.worker");
 const { AssWorker }        = require("../../workers/ass.worker");
 const { RenderWorker }     = require("../../workers/render.worker");
 
@@ -26,9 +24,7 @@ async function CaptionEngine(payload) {
 
     try {
       const normalized = await NormalizerWorker({ clip, transcript, jobDir });
-      const highlighted = await HighlightWorker({ clip, segments: normalized.segments, jobDir });
-      const styled = await StyleWorker({ clip, segments: highlighted.segments, jobDir });
-      const assFile = await AssWorker({ clip, segments: styled.segments, jobDir });
+      const assFile = await AssWorker({ clip, segments: normalized.segments, jobDir });
       const rendered = await RenderWorker({ clip, assPath: assFile.assPath, jobDir });
 
       results.push({

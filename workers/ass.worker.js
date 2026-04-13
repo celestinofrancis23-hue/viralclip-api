@@ -32,8 +32,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Normal,Montserrat,80,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,5,40,40,0,1
-Style: Highlight,Montserrat,90,&H00FFBF00,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,5,40,40,0,1
+Style: Normal,Montserrat,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,5,40,40,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -48,55 +47,32 @@ function buildSegmentLine(seg) {
   const start = formatAssTime(seg.start);
   const end   = formatAssTime(seg.end);
 
-  // Agrupar em linhas de máx 3 palavras, máx 2 linhas
-  const lines = [];
-  for (let i = 0; i < seg.words.length; i += 3) {
-    const chunk = seg.words.slice(i, i + 3);
-    lines.push(chunk.map((w) => buildWordTags(w)).join(" "));
+  const words = seg.words || [];
+  if (words.length === 0) return null;
+
+  // Linha 1 (branca, fs52): primeiras até 3 palavras
+  const line1Text = words.slice(0, 3)
+    .map(w => (w.word || "") + (w.punctuation || ""))
+    .join(" ")
+    .trim();
+
+  // Linha 2 (ciano #00BFFF, fs72): palavras 4-6
+  const line2Text = words.slice(3, 6)
+    .map(w => (w.word || "") + (w.punctuation || ""))
+    .join(" ")
+    .trim();
+
+  // \an5\pos(540,960) = centro exacto do frame 1080×1920
+  let body;
+  if (line1Text && line2Text) {
+    body = `{\\fs52\\c&H00FFFFFF&}${line1Text}\\N{\\fs72\\c&H00FFBF00&}${line2Text}`;
+  } else {
+    // Segmento curto: só linha ciano
+    body = `{\\fs72\\c&H00FFBF00&}${line1Text || line2Text}`;
   }
 
-  // \an5 = centro (horizontal+vertical), \pos(540,960) = centro do frame 1080×1920
-  const text = "{\\an5\\pos(540,960)}" + lines.join("\\N");
-
+  const text = `{\\an5\\pos(540,960)}${body}`;
   return `Dialogue: 0,${start},${end},Normal,,0,0,0,,${text}`;
-}
-
-function buildWordTags(word) {
-  const s    = word.style;
-  const tags = [];
-
-  tags.push(`\\c${s.primaryColor}&`);
-  tags.push(`\\fs${s.fontSize}`);
-  if (s.bold) tags.push("\\b1");
-
-  if (s.animation) {
-    const anim = buildAnimationTag(s.animation);
-    if (anim) tags.push(anim);
-  }
-
-  const openTag  = tags.length ? `{${tags.join("")}}` : "";
-  const closeTag = "{\\r}";
-  const wordText = word.word + (word.punctuation || "");
-
-  return `${openTag}${wordText}${closeTag}`;
-}
-
-function buildAnimationTag(animation) {
-  const { type, durationMs, scaleFrom, scaleTo } = animation;
-
-  switch (type) {
-    case "shake_scale":
-      return (
-        `\\t(0,${durationMs},\\fscx${scaleTo}\\fscy${scaleTo})` +
-        `\\t(${durationMs},${durationMs * 2},\\fscx${scaleFrom}\\fscy${scaleFrom})`
-      );
-    case "scale_pop":
-      return `\\t(0,${durationMs},\\fscx${scaleTo}\\fscy${scaleTo})\\t(${durationMs},${durationMs * 2},\\fscx100\\fscy100)`;
-    case "fade_in":
-      return `\\fad(${durationMs},0)`;
-    default:
-      return null;
-  }
 }
 
 function formatAssTime(seconds) {
