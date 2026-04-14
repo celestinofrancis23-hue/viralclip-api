@@ -11,7 +11,7 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
 
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { spawnSync } = require("child_process");
 
 function safeMkdir(dir) {
@@ -91,6 +91,14 @@ const uploadUrlLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Too many requests. Try again later." },
+});
+
+const downloadUrlLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, code: "RATE_LIMITED", message: "Too many requests. Try again later." },
 });
 
 app.get("/", (req, res) => res.status(200).send("OK"));
@@ -772,6 +780,115 @@ app.get("/jobs/:jobId", jobStatusLimiter, async (req, res) => {
   } catch (err) {
     console.error("❌ Erro ao buscar status:", err);
     return res.status(500).json({ success: false, error: "Erro interno" });
+  }
+});
+
+/* ======================================================
+   📡 POST /clips/download-url
+   Gera uma signed URL temporária (5 min) para um clip no R2.
+   Nunca expõe a URL pública do bucket.
+====================================================== */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DOWNLOAD_URL_TTL = 60 * 5; // 5 minutos
+
+app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
+  try {
+    const { jobId, videoKey } = req.body || {};
+
+    // ── 1. Validar campos obrigatórios ──────────────────────────────────
+    if (!jobId || !videoKey) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_FIELDS",
+        message: "jobId and videoKey are required",
+      });
+    }
+
+    // ── 2. Validar formato UUID do jobId ────────────────────────────────
+    if (!UUID_REGEX.test(jobId)) {
+      return res.status(400).json({
+        ok: false,
+        code: "INVALID_JOB_ID",
+        message: "jobId must be a valid UUID",
+      });
+    }
+
+    // ── 3. Validar videoKey é string não vazia ──────────────────────────
+    if (typeof videoKey !== "string" || !videoKey.trim()) {
+      return res.status(400).json({
+        ok: false,
+        code: "INVALID_KEY",
+        message: "videoKey must be a non-empty string",
+      });
+    }
+
+    // ── 4. Validar que o videoKey pertence a este job ───────────────────
+    // Key format: clips/{userId}/{jobId}/{filename}
+    // O jobId deve estar no segmento 3 (índice 2) do path
+    const keySegments = videoKey.split("/");
+    if (keySegments[2] !== jobId) {
+      return res.status(403).json({
+        ok: false,
+        code: "KEY_JOB_MISMATCH",
+        message: "videoKey does not belong to this job",
+      });
+    }
+
+    // ── 5. Validar que o job existe no Supabase ─────────────────────────
+    const { data: job, error: dbError } = await supabaseAdmin
+      .from("clip_jobs")
+      .select("jobId, output_payload")
+      .eq("jobId", jobId)
+      .maybeSingle();
+
+    if (dbError) {
+      console.error("❌ [download-url] Supabase error:", dbError);
+      return res.status(500).json({
+        ok: false,
+        code: "INTERNAL_ERROR",
+        message: "Database error",
+      });
+    }
+
+    if (!job) {
+      return res.status(404).json({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Clip not found",
+      });
+    }
+
+    // ── 6. Validar que o videoKey está na payload deste job ─────────────
+    const clips = Array.isArray(job.output_payload) ? job.output_payload : [];
+    const clipExists = clips.some(
+      (c) => c.videoKey === videoKey || c.thumbKey === videoKey
+    );
+
+    if (!clipExists) {
+      return res.status(404).json({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Clip not found",
+      });
+    }
+
+    // ── 7. Gerar signed URL (nunca expõe URL pública do R2) ─────────────
+    const command = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: videoKey,
+    });
+
+    const url = await getSignedUrl(r2, command, { expiresIn: DOWNLOAD_URL_TTL });
+
+    return res.status(200).json({ ok: true, url });
+
+  } catch (err) {
+    console.error("❌ [download-url] erro:", err.message);
+    return res.status(500).json({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      message: "Failed to generate download URL",
+    });
   }
 });
 
