@@ -12,7 +12,7 @@
 //   [{time, center:{x,y}, faceBox, confidence, isSpeaking}]
 //   (coords normalizadas [0-1])
 
-const EMA_ALPHA       = 0.45;  // suavização do centro — menor = mais lag, mais estável
+const EMA_ALPHA       = 0.18;  // suavização do centro — menor = mais lag, mais estável
 const MERGE_GAP_S     = 0.6;   // gap de silêncio (s) abaixo do qual duas falas se fundem
 const SIZE_WEIGHT     = 0.65;  // peso do tamanho da face no score
 const CENTER_WEIGHT   = 0.35;  // peso da centralidade no score

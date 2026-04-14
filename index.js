@@ -28,6 +28,7 @@ const ClipAssembler = require("./workers/ClipAssembler");
 const faceDetectionWorker = require("./workers/faceDetectionWorker");
 const CropPathWalker = require("./workers/verticalCropEngine/analyzers/CropPathWalker");
 const ActiveSpeakerResolver = require("./workers/ActiveSpeakerResolver");
+const SceneCutDetector = require("./workers/SceneCutDetector");
 const VerticalRenderWorker = require("./renderers/VerticalRenderWorker");
 const CaptionMerge = require("./services/captionMerge");
 // CORRETO
@@ -448,12 +449,16 @@ writeJobStatus(jobDir, "generating clips", { progress: 80 });
         clipStart:           clip.startTime,
       });
 
-      // Calcular cropPath suavizado (EMA + SMA + dead zone + speed limit)
+      // Detectar cortes de câmera no clip (clip-relative timestamps)
+      const { cuts: sceneCuts } = SceneCutDetector({ videoPath: clip.clipPath });
+
+      // Calcular cropPath suavizado (EMA + SMA cut-aware + dead zone + speed dual-mode)
       const { cropPath } = CropPathWalker({
         faceTimeline,
         clipDuration,
         sourceWidth:  videoWidth,
         sourceHeight: videoHeight,
+        sceneCuts,
       });
 
       console.log(`🎯 Clip ${clip.clipIndex}: ${cropPath.length} keyframes de crop dinâmico`);
