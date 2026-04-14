@@ -9,9 +9,9 @@
 //   5. Limitar velocidade máxima de movimento (câmera suave)
 //   6. Subamostrar para ≤ MAX_KEYFRAMES keyframes (FFmpeg expression limit)
 
-const MAX_SPEED_PX_S  = 600;   // pixels/segundo máximo de deslocação da câmera
-const DEAD_ZONE_PX    = 8;     // pixels — movimentos menores ignorados
-const SMA_WINDOW      = 5;     // janela do moving average adicional (frames)
+const MAX_SPEED_PX_S  = 1200;  // pixels/segundo máximo de deslocação da câmera
+const DEAD_ZONE_PX    = 3;     // pixels — movimentos menores ignorados
+const SMA_WINDOW      = 3;     // janela do moving average adicional (frames)
 const MAX_KEYFRAMES   = 60;    // limite de keyframes para a expressão FFmpeg
 
 module.exports = function CropPathWalker({
