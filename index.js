@@ -27,6 +27,7 @@ const { analyzeViralMoments } = require("./services/aiAnalyzer");
 const ClipAssembler = require("./workers/ClipAssembler");
 const faceDetectionWorker = require("./workers/faceDetectionWorker");
 const CropPathWalker = require("./workers/verticalCropEngine/analyzers/CropPathWalker");
+const ActiveSpeakerResolver = require("./workers/ActiveSpeakerResolver");
 const VerticalRenderWorker = require("./renderers/VerticalRenderWorker");
 const CaptionMerge = require("./services/captionMerge");
 // CORRETO
@@ -438,8 +439,14 @@ writeJobStatus(jobDir, "generating clips", { progress: 80 });
         .filter(f => f.time >= clip.startTime && f.time <= clip.endTime)
         .map(f => ({ ...f, time: Math.round((f.time - clip.startTime) * 1000) / 1000 }));
 
-      // Converter para faceTimeline normalizada com EMA
-      const faceTimeline = buildFaceTimeline(clipFrames, videoWidth, videoHeight);
+      // Active Speaker: cruza faces com timestamps de fala do Whisper
+      const { faceTimeline } = ActiveSpeakerResolver({
+        faceFrames:          clipFrames,
+        transcriptSegments:  transcript.segments,
+        videoWidth,
+        videoHeight,
+        clipStart:           clip.startTime,
+      });
 
       // Calcular cropPath suavizado (EMA + SMA + dead zone + speed limit)
       const { cropPath } = CropPathWalker({
@@ -819,60 +826,6 @@ function probeVideoDimensions(videoPath) {
   }
 }
 
-/**
- * Converte frames da detecção Haar (pixel coords) →
- * faceTimeline normalizada [0-1] com EMA para suavizar.
- *
- * @param {Array}  frames       — [{time, faces:[{x,y,w,h,confidence}]}]
- * @param {number} videoWidth
- * @param {number} videoHeight
- */
-function buildFaceTimeline(frames, videoWidth, videoHeight) {
-  const EMA_ALPHA = 0.3;
-  let emaX = null;
-  let emaY = null;
-
-  return frames.map(({ time, faces }) => {
-    // escolher o rosto maior (maior área)
-    const bestFace = (faces || []).reduce((best, f) => {
-      const area = f.w * f.h;
-      return (!best || area > best.w * best.h) ? f : best;
-    }, null);
-
-    // normalizar coordenadas para [0-1]
-    let cx = 0.5;
-    let cy = 0.3;
-
-    if (bestFace) {
-      cx = (bestFace.x + bestFace.w / 2) / videoWidth;
-      cy = (bestFace.y + bestFace.h / 2) / videoHeight;
-    }
-
-    // EMA smoothing
-    if (emaX === null) {
-      emaX = cx;
-      emaY = cy;
-    } else {
-      emaX = EMA_ALPHA * cx + (1 - EMA_ALPHA) * emaX;
-      emaY = EMA_ALPHA * cy + (1 - EMA_ALPHA) * emaY;
-    }
-
-    return {
-      time,
-      center: {
-        x: Math.round(emaX * 10000) / 10000,
-        y: Math.round(emaY * 10000) / 10000,
-      },
-      faceBox: bestFace ? {
-        x: bestFace.x / videoWidth,
-        y: bestFace.y / videoHeight,
-        w: bestFace.w / videoWidth,
-        h: bestFace.h / videoHeight,
-      } : null,
-      confidence: bestFace ? (bestFace.confidence || 1) : 0,
-    };
-  });
-}
 
 /* ======================================================
    🚀 START SERVER
