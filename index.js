@@ -898,9 +898,11 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
 
     // ── 7. Gerar signed URL (nunca expõe URL pública do R2) ─────────────
     console.log("🔗 [download-url] a gerar signed URL para key:", videoKey);
+    const filename = videoKey.split("/").pop() || "clip.mp4";
     const command = new GetObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: videoKey,
+      ResponseContentDisposition: `attachment; filename="${filename}"`,
     });
 
     const url = await getSignedUrl(r2, command, { expiresIn: DOWNLOAD_URL_TTL });
