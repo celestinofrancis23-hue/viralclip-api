@@ -795,8 +795,11 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
   try {
     const { jobId, videoKey } = req.body || {};
 
+    console.log("📥 [download-url] body recebido:", JSON.stringify(req.body));
+
     // ── 1. Validar campos obrigatórios ──────────────────────────────────
     if (!jobId || !videoKey) {
+      console.warn("⚠️  [download-url] campos em falta — jobId:", jobId, "videoKey:", videoKey);
       return res.status(400).json({
         ok: false,
         code: "MISSING_FIELDS",
@@ -806,6 +809,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
 
     // ── 2. Validar formato UUID do jobId ────────────────────────────────
     if (!UUID_REGEX.test(jobId)) {
+      console.warn("⚠️  [download-url] jobId inválido:", jobId);
       return res.status(400).json({
         ok: false,
         code: "INVALID_JOB_ID",
@@ -815,6 +819,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
 
     // ── 3. Validar videoKey é string não vazia ──────────────────────────
     if (typeof videoKey !== "string" || !videoKey.trim()) {
+      console.warn("⚠️  [download-url] videoKey inválido:", videoKey);
       return res.status(400).json({
         ok: false,
         code: "INVALID_KEY",
@@ -822,11 +827,18 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
       });
     }
 
+    console.log("🔑 [download-url] videoKey recebido:", videoKey);
+    console.log("🔑 [download-url] segmentos da key:", videoKey.split("/"));
+
     // ── 4. Validar que o videoKey pertence a este job ───────────────────
-    // Key format: clips/{userId}/{jobId}/{filename}
-    // O jobId deve estar no segmento 3 (índice 2) do path
+    // Key format guardado no R2: clips/{userId}/{jobId}/{filename}
+    // O jobId deve estar no segmento de índice 2 (após "clips" e userId)
     const keySegments = videoKey.split("/");
-    if (keySegments[2] !== jobId) {
+    const keyJobId = keySegments[2];
+    console.log("🔍 [download-url] jobId esperado:", jobId, "— encontrado na key (seg[2]):", keyJobId);
+
+    if (keyJobId !== jobId) {
+      console.warn("⛔ [download-url] KEY_JOB_MISMATCH — key:", videoKey, "jobId:", jobId);
       return res.status(403).json({
         ok: false,
         code: "KEY_JOB_MISMATCH",
@@ -835,6 +847,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
     }
 
     // ── 5. Validar que o job existe no Supabase ─────────────────────────
+    console.log("🗄️  [download-url] a consultar Supabase para jobId:", jobId);
     const { data: job, error: dbError } = await supabaseAdmin
       .from("clip_jobs")
       .select("jobId, output_payload")
@@ -851,6 +864,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
     }
 
     if (!job) {
+      console.warn("⚠️  [download-url] job não encontrado no Supabase:", jobId);
       return res.status(404).json({
         ok: false,
         code: "NOT_FOUND",
@@ -858,13 +872,23 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
       });
     }
 
+    console.log("📦 [download-url] output_payload do job:", JSON.stringify(job.output_payload));
+
     // ── 6. Validar que o videoKey está na payload deste job ─────────────
     const clips = Array.isArray(job.output_payload) ? job.output_payload : [];
+    console.log("🔎 [download-url] a procurar videoKey nos", clips.length, "clips do payload");
+    clips.forEach((c, i) => {
+      console.log(`   clip[${i}] videoKey="${c.videoKey}" thumbKey="${c.thumbKey}"`);
+    });
+
     const clipExists = clips.some(
       (c) => c.videoKey === videoKey || c.thumbKey === videoKey
     );
 
+    console.log("✅ [download-url] clipExists:", clipExists, "— procurado:", videoKey);
+
     if (!clipExists) {
+      console.warn("⚠️  [download-url] videoKey não encontrado no output_payload");
       return res.status(404).json({
         ok: false,
         code: "NOT_FOUND",
@@ -873,6 +897,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
     }
 
     // ── 7. Gerar signed URL (nunca expõe URL pública do R2) ─────────────
+    console.log("🔗 [download-url] a gerar signed URL para key:", videoKey);
     const command = new GetObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: videoKey,
@@ -880,6 +905,7 @@ app.post("/clips/download-url", downloadUrlLimiter, async (req, res) => {
 
     const url = await getSignedUrl(r2, command, { expiresIn: DOWNLOAD_URL_TTL });
 
+    console.log("✅ [download-url] signed URL gerada com sucesso (expira em", DOWNLOAD_URL_TTL, "s)");
     return res.status(200).json({ ok: true, url });
 
   } catch (err) {
