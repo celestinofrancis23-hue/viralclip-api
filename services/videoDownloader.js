@@ -110,7 +110,7 @@ function runYtDlp(url, outputPath, format, playerClient, cookiesPath) {
       url,
       "--output", outputPath,
       "--format", format,
-      "--merge-output-format", "mkv",
+      "--merge-output-format", "mp4",
       "--no-warnings",
       "--retries", "5",
       "--fragment-retries", "5",
@@ -150,10 +150,15 @@ function runYtDlp(url, outputPath, format, playerClient, cookiesPath) {
 
 // ── downloadYouTube ───────────────────────────────────────────────────────────
 // Tenta múltiplos player_clients em sequência.
-// Para cada client, tenta primeiro o formato completo, depois o formato simples.
+// Para cada client, tenta primeiro o formato de alta qualidade, depois o simples.
 async function downloadYouTube(url, outputPath, cookiesPath) {
   const clients = ["android", "web", "ios"];
-  const formats = ["bestvideo+bestaudio/best", "best"];
+  const formats = [
+    // 1ª escolha: 1080p+ em mp4/m4a — merge sem re-encode
+    "bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=1080]+bestaudio/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio",
+    // Fallback: o que houver de melhor
+    "best",
+  ];
 
   const errors = [];
 

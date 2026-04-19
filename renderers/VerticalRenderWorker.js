@@ -103,11 +103,12 @@ module.exports = async function VerticalRenderWorker({
       "-map", "0:v:0",
       "-map", "0:a:0?",
       "-c:v", "libx264",
-      "-preset", "fast",
+      "-crf", "18",
+      "-preset", "slow",
       "-profile:v", "high",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
-      "-b:a", "128k",
+      "-b:a", "192k",
       "-movflags", "+faststart",
       outputPath
     );
