@@ -4,7 +4,7 @@ const { spawn } = require("child_process");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 
 const COOKIES_LOCAL_PATH  = "/tmp/yt_cookies.txt";
-const COOKIES_R2_KEY      = "config/youtube-cookies.txt/cookies(1).txt";
+const COOKIES_R2_KEY      = "config/youtube-cookies.txt";
 const COOKIES_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 horas
 
 const R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL;
