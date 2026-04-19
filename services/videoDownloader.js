@@ -102,6 +102,21 @@ function ensureFileLooksValid(filePath) {
   return size;
 }
 
+// ── buildExtractorArgs ────────────────────────────────────────────────────────
+// Constrói o valor de --extractor-args para o youtube extractor.
+// PO Token: não pode ser gerado server-side sem browser headless.
+// Solução: o utilizador gera-o manualmente e coloca em YTDLP_PO_TOKEN no Railway.
+// Como gerar: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#po-token-guide
+function buildExtractorArgs(playerClient) {
+  const poToken = process.env.YTDLP_PO_TOKEN;
+  if (poToken && poToken.trim()) {
+    // PO Token associado ao client — formato: web+TOKEN ou tv_embedded+TOKEN
+    const tokenClient = playerClient === "tv_embedded" ? "tv_embedded" : "web";
+    return `youtube:player_client=${playerClient};po_token=${tokenClient}+${poToken.trim()}`;
+  }
+  return `youtube:player_client=${playerClient}`;
+}
+
 // ── runYtDlp ──────────────────────────────────────────────────────────────────
 // Tenta um único download com o player_client e formato fornecidos.
 function runYtDlp(url, outputPath, format, playerClient, cookiesPath) {
@@ -114,13 +129,22 @@ function runYtDlp(url, outputPath, format, playerClient, cookiesPath) {
       "--no-warnings",
       "--retries", "5",
       "--fragment-retries", "5",
-      "--extractor-args", `youtube:player_client=${playerClient}`,
-      "--add-header", "User-Agent: Mozilla/5.0",
+      "--extractor-args", buildExtractorArgs(playerClient),
+      "--add-header", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "--add-header", "Accept-Language: en-US,en;q=0.9",
     ];
 
+    // Cookies
     if (cookiesPath) {
-      args.unshift("--cookies", cookiesPath);
+      args.push("--cookies", cookiesPath);
+    }
+
+    // Proxy residencial (solução definitiva para IPs de datacenter bloqueados)
+    // Configurar YTDLP_PROXY no Railway com URL tipo socks5://user:pass@host:port
+    const proxy = process.env.YTDLP_PROXY;
+    if (proxy && proxy.trim()) {
+      args.push("--proxy", proxy.trim());
+      console.log(`🌐 [yt-dlp] A usar proxy`);
     }
 
     console.log(`🚀 yt-dlp [client=${playerClient}, format=${format}]:`, args.join(" "));
@@ -149,14 +173,17 @@ function runYtDlp(url, outputPath, format, playerClient, cookiesPath) {
 }
 
 // ── downloadYouTube ───────────────────────────────────────────────────────────
-// Tenta múltiplos player_clients em sequência.
-// Para cada client, tenta primeiro o formato de alta qualidade, depois o simples.
+// Ordem de clientes:
+//   tv_embedded — frequentemente bypassa bot check em servidores cloud
+//   mweb        — mobile web, menos restrições
+//   web         — acesso à lista completa de formatos
+//   ios         — fallback
+//
+// Para cada client tenta bestvideo+bestaudio primeiro, depois "best" simples.
+// Bot/sign-in error: salta imediatamente para o próximo client.
 async function downloadYouTube(url, outputPath, cookiesPath) {
-  const clients = ["web", "ios", "android"];
-  const formats = [
-    "bestvideo+bestaudio/best",
-    "best",
-  ];
+  const clients = ["tv_embedded", "mweb", "web", "ios"];
+  const formats = ["bestvideo+bestaudio/best", "best"];
 
   const errors = [];
 
@@ -165,21 +192,18 @@ async function downloadYouTube(url, outputPath, cookiesPath) {
       try {
         await runYtDlp(url, outputPath, format, client, cookiesPath);
         console.log(`✅ yt-dlp sucesso [client=${client}, format=${format}]`);
-        return; // sucesso — sair imediatamente
+        return;
       } catch (err) {
         console.warn(`⚠️  yt-dlp falhou [client=${client}, format=${format}]:`, err.message);
         errors.push(`[${client}/${format}] ${err.message}`);
 
-        // Se o erro for "Sign in" / bot check, não faz sentido tentar o outro
-        // formato com o mesmo client — mas ainda vale tentar outro client
-        if (/Sign in|bot|confirm/i.test(err.message)) {
-          break; // saltar para o próximo client
+        if (/Sign in|bot|confirm|This video is not available/i.test(err.message)) {
+          break; // próximo client
         }
       }
     }
   }
 
-  // Todos os clientes falharam
   throw new Error(
     `[VideoDownloader] Todos os clientes yt-dlp falharam:\n${errors.join("\n")}`
   );
