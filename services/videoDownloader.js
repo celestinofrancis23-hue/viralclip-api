@@ -1,35 +1,77 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 
-const COOKIES_PATH_FALLBACK = "/app/cookies.txt";
-const COOKIES_PATH_TMP      = "/tmp/yt_cookies.txt";
+const COOKIES_LOCAL_PATH  = "/tmp/yt_cookies.txt";
+const COOKIES_R2_KEY      = "config/youtube-cookies.txt";
+const COOKIES_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 horas
 
 const R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL;
 
+// Cliente R2 próprio do videoDownloader (o de index.js não está acessível aqui)
+const r2 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId:     process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
+
 // ── Cookies ────────────────────────────────────────────────────────────────────
-// Se a variável YOUTUBE_COOKIES existir, escrevê-la em /tmp antes de usar.
-// Caso contrário, tentar o ficheiro legacy /app/cookies.txt.
-function resolveCookiesPath() {
-  const envCookies = process.env.YOUTUBE_COOKIES;
-
-  if (envCookies && envCookies.trim()) {
-    try {
-      fs.writeFileSync(COOKIES_PATH_TMP, envCookies, "utf8");
-      console.log("🍪 [cookies] Escritos de YOUTUBE_COOKIES →", COOKIES_PATH_TMP);
-      return COOKIES_PATH_TMP;
-    } catch (err) {
-      console.warn("⚠️  [cookies] Não foi possível escrever em /tmp:", err.message);
+// Descarrega config/youtube-cookies.txt do R2 para /tmp/yt_cookies.txt.
+// Usa cache de 24 horas — só vai ao R2 se o ficheiro local não existir
+// ou tiver mais de 24 horas.
+async function resolveCookiesPath() {
+  // Verificar cache local
+  if (fs.existsSync(COOKIES_LOCAL_PATH)) {
+    const age = Date.now() - fs.statSync(COOKIES_LOCAL_PATH).mtimeMs;
+    if (age < COOKIES_MAX_AGE_MS) {
+      console.log(`🍪 [cookies] Cache válido (${Math.round(age / 60000)} min) → ${COOKIES_LOCAL_PATH}`);
+      return COOKIES_LOCAL_PATH;
     }
+    console.log("🍪 [cookies] Cache expirado — a actualizar do R2...");
+  } else {
+    console.log("🍪 [cookies] Ficheiro local ausente — a descarregar do R2...");
   }
 
-  if (fs.existsSync(COOKIES_PATH_FALLBACK)) {
-    console.log("🍪 [cookies] A usar ficheiro legacy:", COOKIES_PATH_FALLBACK);
-    return COOKIES_PATH_FALLBACK;
-  }
+  // Descarregar do R2
+  try {
+    const cmd = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key:    COOKIES_R2_KEY,
+    });
 
-  console.warn("⚠️  [cookies] Nenhuns cookies disponíveis — a tentar sem cookies");
-  return null;
+    const { Body } = await r2.send(cmd);
+
+    // Body é um ReadableStream (Node.js) — colectar chunks
+    const chunks = [];
+    for await (const chunk of Body) {
+      chunks.push(chunk);
+    }
+    const content = Buffer.concat(chunks).toString("utf8");
+
+    if (!content.trim()) {
+      throw new Error("Ficheiro de cookies vazio no R2");
+    }
+
+    fs.writeFileSync(COOKIES_LOCAL_PATH, content, "utf8");
+    console.log(`✅ [cookies] Descarregado de R2 (${COOKIES_R2_KEY}) → ${COOKIES_LOCAL_PATH}`);
+    return COOKIES_LOCAL_PATH;
+
+  } catch (err) {
+    console.warn("⚠️  [cookies] Falha ao descarregar do R2:", err.message);
+
+    // Fallback: usar cache expirado se existir (melhor do que nada)
+    if (fs.existsSync(COOKIES_LOCAL_PATH)) {
+      console.warn("⚠️  [cookies] A usar cache expirado como fallback");
+      return COOKIES_LOCAL_PATH;
+    }
+
+    console.warn("⚠️  [cookies] Sem cookies — a tentar sem autenticação");
+    return null;
+  }
 }
 
 function safeMkdir(dir) {
@@ -179,7 +221,7 @@ module.exports = async function videoDownloader(job, baseTempDir) {
 
     console.log("⬇️ YouTube download:", source.url);
 
-    const cookiesPath = resolveCookiesPath();
+    const cookiesPath = await resolveCookiesPath();
     const outputPath  = path.join(jobDir, "source.%(ext)s");
 
     await downloadYouTube(source.url, outputPath, cookiesPath);
