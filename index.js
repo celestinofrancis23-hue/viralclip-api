@@ -11,7 +11,15 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
 
-const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} = require("@aws-sdk/client-s3");
 const { spawnSync } = require("child_process");
 
 function safeMkdir(dir) {
@@ -682,6 +690,139 @@ app.post("/upload-url", uploadUrlLimiter, async (req, res) => {
     console.error("[upload-url] ❌ erro:", err.name, "|", err.message);
     console.error("[upload-url] stack:", err.stack);
     return res.status(500).json({ ok: false, error: "failed to generate upload url", detail: err.message });
+  }
+});
+
+/* ======================================================
+   📡 MULTIPART UPLOAD — upload em chunks directamente para R2
+   O Wix faz upload de cada parte directamente para o R2
+   sem passar pelo Express, evitando timeouts em ficheiros grandes.
+
+   Fluxo:
+     1. POST /upload-multipart/start       → uploadId + key
+     2. POST /upload-multipart/part-url    → signedUrl por parte (5MB cada)
+        (repetir para cada chunk)
+     3. PUT <signedUrl> com o chunk binário (feito pelo Wix, não pelo servidor)
+        (o R2 devolve ETag no header da resposta)
+     4. POST /upload-multipart/complete    → finaliza o upload
+     5. POST /upload-multipart/abort       → limpa em caso de erro
+====================================================== */
+
+// 1. Iniciar multipart upload — devolve uploadId e key
+app.post("/upload-multipart/start", async (req, res) => {
+  try {
+    const { userId, jobId } = req.body || {};
+
+    if (!userId || !jobId) {
+      return res.status(400).json({ ok: false, error: "missing userId or jobId" });
+    }
+
+    if (!UUID_REGEX.test(jobId)) {
+      return res.status(400).json({ ok: false, error: "invalid jobId format" });
+    }
+
+    const key = `uploads/${userId}/${jobId}/source.mp4`;
+
+    const { UploadId } = await r2.send(new CreateMultipartUploadCommand({
+      Bucket:      process.env.R2_BUCKET_NAME,
+      Key:         key,
+      ContentType: "video/mp4",
+    }));
+
+    console.log(`[multipart/start] uploadId=${UploadId} key=${key}`);
+    return res.json({ ok: true, uploadId: UploadId, key });
+
+  } catch (err) {
+    console.error("[multipart/start] ❌", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 2. Gerar URL assinada para upload de uma parte
+//    O Wix faz PUT directo para este URL com o chunk binário.
+//    Mínimo por parte: 5MB (excepto a última).
+app.post("/upload-multipart/part-url", async (req, res) => {
+  try {
+    const { key, uploadId, partNumber } = req.body || {};
+
+    if (!key || !uploadId || !partNumber) {
+      return res.status(400).json({ ok: false, error: "missing key, uploadId or partNumber" });
+    }
+
+    if (partNumber < 1 || partNumber > 10000) {
+      return res.status(400).json({ ok: false, error: "partNumber must be 1–10000" });
+    }
+
+    const command = new UploadPartCommand({
+      Bucket:     process.env.R2_BUCKET_NAME,
+      Key:        key,
+      UploadId:   uploadId,
+      PartNumber: Number(partNumber),
+    });
+
+    const signedUrl = await getSignedUrl(r2, command, { expiresIn: 3600 }); // 1 hora
+
+    console.log(`[multipart/part-url] part=${partNumber} uploadId=${uploadId}`);
+    return res.json({ ok: true, signedUrl, partNumber });
+
+  } catch (err) {
+    console.error("[multipart/part-url] ❌", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 3. Completar o multipart upload
+//    parts: [{ partNumber: 1, etag: "..." }, ...]
+//    O ETag de cada parte vem no header da resposta ao PUT feito pelo Wix.
+app.post("/upload-multipart/complete", async (req, res) => {
+  try {
+    const { key, uploadId, parts } = req.body || {};
+
+    if (!key || !uploadId || !Array.isArray(parts) || !parts.length) {
+      return res.status(400).json({ ok: false, error: "missing key, uploadId or parts" });
+    }
+
+    const sortedParts = [...parts]
+      .sort((a, b) => a.partNumber - b.partNumber)
+      .map(p => ({ PartNumber: Number(p.partNumber), ETag: String(p.etag) }));
+
+    await r2.send(new CompleteMultipartUploadCommand({
+      Bucket:          process.env.R2_BUCKET_NAME,
+      Key:             key,
+      UploadId:        uploadId,
+      MultipartUpload: { Parts: sortedParts },
+    }));
+
+    console.log(`[multipart/complete] ✅ key=${key} parts=${parts.length}`);
+    return res.json({ ok: true, key });
+
+  } catch (err) {
+    console.error("[multipart/complete] ❌", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 4. Abortar — limpa partes já enviadas (evitar cobrança de storage parcial)
+app.post("/upload-multipart/abort", async (req, res) => {
+  try {
+    const { key, uploadId } = req.body || {};
+
+    if (!key || !uploadId) {
+      return res.status(400).json({ ok: false, error: "missing key or uploadId" });
+    }
+
+    await r2.send(new AbortMultipartUploadCommand({
+      Bucket:   process.env.R2_BUCKET_NAME,
+      Key:      key,
+      UploadId: uploadId,
+    }));
+
+    console.log(`[multipart/abort] key=${key} uploadId=${uploadId}`);
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error("[multipart/abort] ❌", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
