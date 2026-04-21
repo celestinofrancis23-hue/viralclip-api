@@ -1,6 +1,58 @@
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+
+const LONG_AUDIO_THRESHOLD_S = 10 * 60; // 10 minutos
+
+// Devolve a duração do ficheiro de áudio em segundos via ffprobe.
+// Retorna 0 se não conseguir determinar.
+function getAudioDuration(filePath) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ], { encoding: "utf8", timeout: 15_000 });
+
+  const val = parseFloat(result.stdout);
+  return isNaN(val) ? 0 : val;
+}
+
+// Para áudios longos (> 10 min), converte para mono 16kHz WAV antes do Whisper.
+// Reduz o tamanho do ficheiro e o tempo de inferência significativamente.
+// Retorna o caminho do ficheiro a usar (comprimido ou original).
+function compressAudioIfNeeded(audioPath, jobDir) {
+  const duration = getAudioDuration(audioPath);
+
+  if (duration <= LONG_AUDIO_THRESHOLD_S) {
+    console.log(`🎵 [AudioTranscriber] Duração: ${Math.round(duration)}s — sem compressão necessária`);
+    return audioPath;
+  }
+
+  console.log(`🗜️  [AudioTranscriber] Duração: ${Math.round(duration)}s (>${LONG_AUDIO_THRESHOLD_S}s) — a comprimir para mono 16kHz...`);
+
+  const compressedPath = path.join(jobDir, "audio_compressed.wav");
+
+  const result = spawnSync("ffmpeg", [
+    "-y",
+    "-i", audioPath,
+    "-ac", "1",          // mono
+    "-ar", "16000",      // 16kHz — taxa ideal para Whisper
+    "-vn",               // sem vídeo
+    compressedPath,
+  ], { encoding: "utf8", timeout: 120_000 });
+
+  if (result.status !== 0 || !fs.existsSync(compressedPath)) {
+    console.warn("⚠️  [AudioTranscriber] Compressão falhou — a usar áudio original");
+    return audioPath;
+  }
+
+  const origMB = (fs.statSync(audioPath).size / 1024 / 1024).toFixed(1);
+  const compMB = (fs.statSync(compressedPath).size / 1024 / 1024).toFixed(1);
+  console.log(`✅ [AudioTranscriber] Comprimido: ${origMB}MB → ${compMB}MB`);
+
+  return compressedPath;
+}
 
 function resolvePythonBinary() {
   const projectRoot = path.join(__dirname, "..");
@@ -80,15 +132,18 @@ module.exports = async function audioTranscriber({
       const timeoutMs =
         Number(process.env.WHISPER_TIMEOUT_MS) > 0
           ? Number(process.env.WHISPER_TIMEOUT_MS)
-          : 180000; // 3 minutos
+          : 600000; // 10 minutos
+
+      // Comprimir áudio se > 10 min (reduz tempo de inferência do Whisper)
+      const effectiveAudioPath = compressAudioIfNeeded(audioPath, jobDir);
 
       console.log("🎧 [AudioTranscriber] Iniciando transcrição...");
-      console.log("🎵 [AudioTranscriber] Áudio:", audioPath);
+      console.log("🎵 [AudioTranscriber] Áudio:", effectiveAudioPath);
       console.log("📄 [AudioTranscriber] Transcript path:", transcriptPath);
       console.log("⏱️ [AudioTranscriber] Timeout(ms):", timeoutMs);
       console.log("🆔 [AudioTranscriber] JobId:", jobId || "N/A");
 
-      const safeAudioPath = escapePythonString(audioPath);
+      const safeAudioPath = escapePythonString(effectiveAudioPath);
       const safeTranscriptPath = escapePythonString(transcriptPath);
 
       const pythonCode = `
