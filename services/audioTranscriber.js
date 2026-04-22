@@ -4,7 +4,7 @@ const path = require("path");
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const VAD_THRESHOLD_S        = 5 * 60;    // activar VAD para áudios > 5 min
-const API_THRESHOLD_S        = 60 * 60;   // usar OpenAI API para voz > 60 min
+const API_THRESHOLD_S        = 20 * 60;   // usar OpenAI API para voz > 20 min
 const LONG_AUDIO_THRESHOLD_S = 10 * 60;   // comprimir para mono 16kHz se > 10 min
 const API_CHUNK_S            = 20 * 60;   // chunkar API em blocos de 20 min
 const API_CHUNK_MAX_BYTES    = 24_000_000; // 24MB — margem abaixo do limite de 25MB da API

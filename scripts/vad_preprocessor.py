@@ -181,7 +181,7 @@ def filter_music_segments(segments, wav_path):
             # Tem pausas internas → fala (pregação longa)
             filtered.append(seg)
         else:
-            print(f"[VAD] ⚠ Segmento {seg['start']:.1f}s–{seg['end']:.1f f} ({duration:.0f}s) sem pausas → música/hino, ignorado")
+            print(f"[VAD] ⚠ Segmento {seg['start']:.1f}s–{seg['end']:.1f}s ({duration:.0f}s) sem pausas → música/hino, ignorado")
 
     return filtered
 
