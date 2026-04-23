@@ -695,18 +695,26 @@ app.post("/upload-url", uploadUrlLimiter, async (req, res) => {
       ContentType: "video/mp4",
     });
 
-    console.log("[upload-url] PutObjectCommand criado — a chamar getSignedUrl...");
+    // Timeout explícito de 10s para a chamada ao R2
+    const uploadUrl = await Promise.race([
+      getSignedUrl(r2, command, { expiresIn: 600 }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("getSignedUrl timeout (10s)")), 10_000)
+      ),
+    ]);
 
-    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 600 });
-
-    console.log("[upload-url] ✅ signed URL gerada com sucesso");
-
+    console.log("[upload-url] ✅ signed URL gerada");
     return res.status(200).json({ ok: true, uploadUrl, key });
 
   } catch (err) {
-    console.error("[upload-url] ❌ erro:", err.name, "|", err.message);
-    console.error("[upload-url] stack:", err.stack);
-    return res.status(500).json({ ok: false, error: "failed to generate upload url", detail: err.message });
+    const isTimeout = err.message?.includes("timeout");
+    console.error("[upload-url] ❌", err.name, "|", err.message);
+    return res.status(isTimeout ? 504 : 500).json({
+      ok:     false,
+      error:  isTimeout ? "timeout_generating_url" : "failed_to_generate_url",
+      detail: err.message,
+      retryable: true,   // indica ao cliente que pode tentar de novo
+    });
   }
 });
 
