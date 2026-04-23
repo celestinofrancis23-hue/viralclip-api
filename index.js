@@ -655,14 +655,21 @@ app.post("/upload", uploadLimiter, upload.single("video"), async (req, res) => {
 // GENERATE SIGNED UPLOAD URL (R2)
 // ===============================
 app.post("/upload-url", uploadUrlLimiter, async (req, res) => {
-  console.log("[upload-url] pedido recebido — body:", JSON.stringify(req.body || {}));
+  console.log("[upload-url] ── pedido recebido ──────────────────────────");
+  console.log("[upload-url] headers:", JSON.stringify({
+    origin:        req.headers["origin"]       || "(ausente)",
+    "content-type": req.headers["content-type"] || "(ausente)",
+    "x-forwarded-for": req.headers["x-forwarded-for"] || "(ausente)",
+  }));
+  console.log("[upload-url] body:", JSON.stringify(req.body || {}));
 
   try {
     const { userId, jobId } = req.body || {};
 
-    console.log("[upload-url] userId:", userId || "(ausente)", "| jobId:", jobId || "(ausente)");
+    console.log("[upload-url] userId:", userId || "(AUSENTE)", "| jobId:", jobId || "(AUSENTE)");
 
     if (!userId || !jobId) {
+      console.warn("[upload-url] ❌ 400 — campos em falta. body recebido:", JSON.stringify(req.body));
       return res.status(400).json({ ok: false, error: "missing userId or jobId" });
     }
 
