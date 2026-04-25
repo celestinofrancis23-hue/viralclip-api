@@ -4,6 +4,80 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Filtro de segmentos de música/louvor
+//  Remove segmentos que parecem letras de música antes de enviar ao GPT.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WORSHIP_KEYWORDS = [
+  "hallelujah", "halleluiah", "alleluia", "aleluia",
+  "hosanna", "sanctus",
+  "oh oh oh", "yeah yeah yeah", "la la la", "na na na",
+  "hey hey hey",
+];
+
+// Palavras isoladas de louvor (só bloqueiam se forem a maioria do segmento)
+const WORSHIP_SINGLE_WORDS = new Set([
+  "hallelujah", "halleluiah", "alleluia", "aleluia", "hosanna",
+]);
+
+function looksLikeMusic(text) {
+  const lower = text.toLowerCase().trim();
+  const words  = lower.split(/\s+/).filter(Boolean);
+
+  // Segmento muito curto (< 3 palavras)
+  if (words.length < 3) return true;
+
+  // Contém frases típicas de louvor musical
+  for (const kw of WORSHIP_KEYWORDS) {
+    if (lower.includes(kw)) return true;
+  }
+
+  // Maioria das palavras são words de louvor isoladas
+  const worshipWordCount = words.filter(w => WORSHIP_SINGLE_WORDS.has(w)).length;
+  if (worshipWordCount >= Math.ceil(words.length / 2)) return true;
+
+  return false;
+}
+
+function filterMusicSegments(segments) {
+  const result   = [];
+  let   removed  = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const text = (segments[i].text || "").trim();
+
+    // 1. Parece música pelo conteúdo?
+    if (looksLikeMusic(text)) {
+      console.log(`🎵 [Filter] Removido (conteúdo): "${text.slice(0, 70)}"`);
+      removed++;
+      continue;
+    }
+
+    // 2. Mesma frase repetida 3+ vezes consecutivas?
+    if (i >= 2) {
+      const t0 = (segments[i - 2].text || "").trim().toLowerCase();
+      const t1 = (segments[i - 1].text || "").trim().toLowerCase();
+      const t2 = text.toLowerCase();
+      if (t0 === t1 && t1 === t2 && t0.length > 0) {
+        console.log(`🎵 [Filter] Removido (repetição 3x): "${text.slice(0, 70)}"`);
+        removed++;
+        continue;
+      }
+    }
+
+    result.push(segments[i]);
+  }
+
+  if (removed > 0) {
+    console.log(`🎵 [Filter] Total removidos: ${removed}/${segments.length} segmentos de música`);
+  } else {
+    console.log(`🎵 [Filter] Nenhum segmento de música detectado (${segments.length} segmentos OK)`);
+  }
+
+  return result;
+}
+
 /**
  * Analisa o transcript e devolve EXACTAMENTE clipCount momentos virais.
  *
@@ -22,7 +96,13 @@ async function analyzeViralMoments({ transcript, clipLength, clipCount }) {
   const safeCount  = Math.max(1, Number(clipCount)  || 5);
   const safeLength = Math.max(5, Number(clipLength) || 30);
 
-  const simplified = transcript.map((seg) => ({
+  // Filtrar segmentos de música/louvor antes de enviar ao GPT
+  const filtered = filterMusicSegments(transcript);
+  if (filtered.length === 0) {
+    throw new Error("[AI] Transcript vazio após filtro de música — sem conteúdo de pregação detectado");
+  }
+
+  const simplified = filtered.map((seg) => ({
     text:  seg.text,
     start: seg.start,
     end:   seg.end,

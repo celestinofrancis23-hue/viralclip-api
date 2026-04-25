@@ -9,6 +9,10 @@ const LONG_AUDIO_THRESHOLD_S = 10 * 60;   // comprimir para mono 16kHz se > 10 m
 const API_CHUNK_S            = 20 * 60;   // chunkar API em blocos de 20 min
 const API_CHUNK_MAX_BYTES    = 24_000_000; // 24MB — margem abaixo do limite de 25MB da API
 
+// Culto de igreja: se > 60 min, ignorar os primeiros 50% (louvor/música)
+const CHURCH_CUT_THRESHOLD_S = 60 * 60;  // activar corte se > 60 min
+const CHURCH_CUT_RATIO       = 0.5;      // ignorar os primeiros 50%
+
 function resolvePythonBinary() {
   const venvPython = path.join(__dirname, "..", ".venv", "bin", "python");
   if (fs.existsSync(venvPython)) return venvPython;
@@ -23,6 +27,47 @@ function fileExistsAndHasSize(filePath, minBytes = 10) {
 
 function escapePythonString(v) {
   return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+// ── cutAudioSecondHalf ────────────────────────────────────────────────────────
+// Extrai a segunda metade do áudio a partir de startS, convertendo para mono
+// 16kHz (ideal para Whisper). Devolve { path, offset } onde offset é o número
+// de segundos que foi ignorado no início — deve ser somado a todos os timestamps
+// do transcript para reflectir a posição real no vídeo original.
+function cutAudioSecondHalf(audioPath, startS, jobDir) {
+  const out = path.join(jobDir, "audio_second_half.wav");
+  const r   = spawnSync("ffmpeg", [
+    "-y", "-ss", String(startS), "-i", audioPath,
+    "-ac", "1", "-ar", "16000", "-vn", out,
+  ], { encoding: "utf8", timeout: 300_000 });
+
+  if (r.status !== 0 || !fs.existsSync(out)) {
+    console.warn("⚠️  [Transcriber] Corte da segunda metade falhou — usando áudio completo");
+    return { path: audioPath, offset: 0 };
+  }
+
+  const durAfter = getAudioDuration(out);
+  console.log(`✅ [Transcriber] Corte OK — ${Math.round(durAfter)}s restantes (offset=${Math.round(startS)}s)`);
+  return { path: out, offset: startS };
+}
+
+// ── applyTimestampOffset ──────────────────────────────────────────────────────
+// Soma offsetS a todos os timestamps do transcript.
+// Usado após corte do início para reflectir posição real no vídeo original.
+function applyTimestampOffset(transcript, offsetS) {
+  return {
+    ...transcript,
+    segments: transcript.segments.map(seg => ({
+      ...seg,
+      start: seg.start + offsetS,
+      end:   seg.end   + offsetS,
+      words: (seg.words || []).map(w => ({
+        ...w,
+        start: w.start + offsetS,
+        end:   w.end   + offsetS,
+      })),
+    })),
+  };
 }
 
 // ── getAudioDuration ──────────────────────────────────────────────────────────
@@ -345,14 +390,32 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
 
   ensureDir(jobDir);
 
-  const audioBaseName  = path.basename(audioPath, path.extname(audioPath));
-  const transcriptPath = path.join(jobDir, `${audioBaseName}.json`);
-  const rawDuration    = getAudioDuration(audioPath);
-  const timeoutMs      = Number(process.env.WHISPER_TIMEOUT_MS) > 0
+  const transcriptPath = path.join(jobDir, "transcript.json");
+  const originalDuration = getAudioDuration(audioPath);
+  const timeoutMs        = Number(process.env.WHISPER_TIMEOUT_MS) > 0
     ? Number(process.env.WHISPER_TIMEOUT_MS)
     : 600_000; // 10 min
 
-  console.log(`🎧 [Transcriber] jobId=${jobId || "N/A"} duração=${Math.round(rawDuration)}s`);
+  console.log(`🎧 [Transcriber] jobId=${jobId || "N/A"} duração=${Math.round(originalDuration)}s`);
+
+  // ── 0. Cortar início se vídeo muito longo (culto de igreja) ───────────────
+  // Se > 60 min, os primeiros 50% são provavelmente louvor/música.
+  // Transcrever apenas a segunda metade e corrigir os timestamps no final.
+  let timeOffset = 0;
+  let rawDuration = originalDuration;
+
+  if (originalDuration > CHURCH_CUT_THRESHOLD_S) {
+    const cutStart = Math.round(originalDuration * CHURCH_CUT_RATIO);
+    console.log(
+      `✂️  [Transcriber] Vídeo longo (${Math.round(originalDuration / 60)}min) — ` +
+      `a ignorar primeiros ${Math.round(cutStart / 60)}min (provável louvor)`
+    );
+    const cut = cutAudioSecondHalf(audioPath, cutStart, jobDir);
+    audioPath   = cut.path;
+    timeOffset  = cut.offset;
+    rawDuration = getAudioDuration(audioPath);
+    console.log(`⏱️  [Transcriber] Duração após corte: ${Math.round(rawDuration)}s (offset=${Math.round(timeOffset)}s)`);
+  }
 
   // ── 1. VAD para áudios longos ─────────────────────────────────────────────
   let vadResult   = null;
@@ -397,13 +460,20 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
     throw new Error("[Transcriber] Transcript em formato inválido");
   }
 
-  // ── 3. Remapear timestamps VAD → vídeo original ───────────────────────────
+  // ── 3. Remapear timestamps VAD → posição no áudio cortado ────────────────
   if (vadResult && vadResult.segments && vadResult.segments.length) {
-    console.log("🗺️  [Transcriber] A remapear timestamps VAD → vídeo original...");
+    console.log("🗺️  [Transcriber] A remapear timestamps VAD → posição no áudio cortado...");
     transcript = remapTranscript(transcript, vadResult);
-    // Regravar com timestamps corrigidos
-    fs.writeFileSync(transcriptPath, JSON.stringify(transcript, null, 2), "utf-8");
   }
+
+  // ── 4. Aplicar offset do corte → posição real no vídeo original ──────────
+  if (timeOffset > 0) {
+    console.log(`⏱️  [Transcriber] A aplicar offset de ${Math.round(timeOffset)}s — timestamps → posição no vídeo original`);
+    transcript = applyTimestampOffset(transcript, timeOffset);
+  }
+
+  // Gravar transcript final (com todos os timestamps corrigidos)
+  fs.writeFileSync(transcriptPath, JSON.stringify(transcript, null, 2), "utf-8");
 
   console.log(`✅ [Transcriber] Transcrição concluída — ${transcript.segments.length} segmentos`);
 
