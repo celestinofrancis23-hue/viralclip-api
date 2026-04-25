@@ -105,20 +105,30 @@ Task: Select exactly ${safeCount} viral moment(s) from this transcript.
 
 ⚠️ CONTENT TYPE: This is a church service recording. It contains a mix of PREACHING/TEACHING and WORSHIP/MUSIC sections.
 
-MUSIC/WORSHIP DETECTION — segments where the text shows:
-- Repeated lyrics or chorus lines (same phrase repeated 2+ times)
-- Words like "hallelujah", "glory", "praise", "worship", "amen" used as lyrics
-- Short fragmented words without full sentences
-- No complete teaching sentences or biblical explanation
-These are WORSHIP/MUSIC segments — DO NOT select them under any circumstances.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IMPORTANT RULES — STRICTLY FOLLOW (violations = wrong output):
+1. ONLY select moments where a pastor/preacher is speaking, teaching or preaching
+2. NEVER select moments with worship music, singing, or congregational singing
+3. NEVER select moments where the audience/congregation is singing or responding in song
+4. The selected moments must contain SPOKEN WORDS only — no music, no singing
+5. If a moment has background music but someone is speaking, it is acceptable
+6. Prioritize moments with: powerful statements, biblical teaching, emotional testimony, life-changing insights
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PREACHING/TEACHING DETECTION — look for:
+HOW TO IDENTIFY WORSHIP/MUSIC (DO NOT SELECT):
+- Repeated lyrics or chorus lines (same phrase repeated 2+ times)
+- Words like "hallelujah", "glory", "praise", "worship", "amen" used as song lyrics
+- Short fragmented words without complete sentences
+- No biblical explanation or teaching structure
+- Congregation or worship leader singing together
+
+HOW TO IDENTIFY PREACHING (SELECT FROM HERE ONLY):
 - Complete sentences explaining scripture, theology, or life principles
-- The speaker addressing the congregation ("you need to...", "God wants...", "the Bible says...")
-- Stories, illustrations, or examples that make a point
-- Questions posed to the congregation followed by answers
+- Pastor addressing the congregation ("you need to...", "God wants...", "the Bible says...")
+- Stories, illustrations, or examples that make a theological point
+- Questions posed to the congregation followed by answers/teaching
 - Direct commands or calls to action rooted in scripture
-These are PREACHING segments — ONLY select from these.
+- Emotional personal testimony or confession from the preacher
 
 VIRAL MOMENT CRITERIA (within preaching sections only) — prioritise in this order:
 1. Emotional peaks — vulnerability, raw honesty, breakthrough moment
@@ -129,7 +139,7 @@ VIRAL MOMENT CRITERIA (within preaching sections only) — prioritise in this or
 6. Moments of humour or congregation engagement within the sermon
 
 STRICTLY AVOID:
-- Any worship song, chorus, or musical interlude
+- Any worship song, chorus, or musical interlude — even if it sounds powerful
 - Intros and self-introductions ("Good morning, welcome...")
 - Offering announcements, event announcements, housekeeping
 - Closing prayer or benediction
@@ -141,7 +151,7 @@ REQUIREMENTS:
 - Each moment must be ~${safeLength}s long (endTime - startTime ≈ ${safeLength})
 - Moments must be non-overlapping
 - Start/end times must be within [0, ${Math.round(videoEnd)}]
-- ALL selected moments must be from spoken preaching/teaching, never from music
+- ALL selected moments must be from spoken preaching/teaching, NEVER from music or worship singing
 
 CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
 [{"startTime": <number>, "endTime": <number>}, ...]`;
