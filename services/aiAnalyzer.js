@@ -94,7 +94,7 @@ async function callGPT({ simplified, videoEnd, safeCount, safeLength, exclude })
     ? `\nAlready selected (DO NOT overlap these):\n${JSON.stringify(exclude.map(m => ({ start: m.startTime, end: m.endTime })))}`
     : "";
 
-  const prompt = `You are an expert viral content editor for TikTok, Instagram Reels, and YouTube Shorts.
+  const prompt = `You are an expert viral content editor for TikTok, Instagram Reels, and YouTube Shorts specialising in church sermon and teaching content.
 
 Transcript (JSON):
 ${JSON.stringify(simplified).slice(0, 12000)}
@@ -103,19 +103,36 @@ Video total duration: ${Math.round(videoEnd)}s${excludeNote}
 
 Task: Select exactly ${safeCount} viral moment(s) from this transcript.
 
-VIRAL MOMENT CRITERIA — prioritise in this order:
-1. Emotional peaks — crying, joy, shock, anger, vulnerability
-2. Powerful revelations or surprising facts that reframe everything
-3. Story climax or turning point — the moment everything changes
-4. Personal stories or testimonials with strong emotional resonance
-5. Bold opinions, controversial takes, or strong calls to action
-6. Humour, unexpected reactions, or audience engagement moments
-7. Quotable lines — short, punchy, memorable phrases
+⚠️ CONTENT TYPE: This is a church service recording. It contains a mix of PREACHING/TEACHING and WORSHIP/MUSIC sections.
+
+MUSIC/WORSHIP DETECTION — segments where the text shows:
+- Repeated lyrics or chorus lines (same phrase repeated 2+ times)
+- Words like "hallelujah", "glory", "praise", "worship", "amen" used as lyrics
+- Short fragmented words without full sentences
+- No complete teaching sentences or biblical explanation
+These are WORSHIP/MUSIC segments — DO NOT select them under any circumstances.
+
+PREACHING/TEACHING DETECTION — look for:
+- Complete sentences explaining scripture, theology, or life principles
+- The speaker addressing the congregation ("you need to...", "God wants...", "the Bible says...")
+- Stories, illustrations, or examples that make a point
+- Questions posed to the congregation followed by answers
+- Direct commands or calls to action rooted in scripture
+These are PREACHING segments — ONLY select from these.
+
+VIRAL MOMENT CRITERIA (within preaching sections only) — prioritise in this order:
+1. Emotional peaks — vulnerability, raw honesty, breakthrough moment
+2. Powerful revelations or surprising biblical insights that reframe everything
+3. Story climax — the moment a personal story or illustration lands
+4. Bold declarations of faith or challenging calls to action
+5. Quotable one-liners — short, punchy, theologically rich phrases
+6. Moments of humour or congregation engagement within the sermon
 
 STRICTLY AVOID:
-- Intros and self-introductions ("Hi, I'm...")
-- Outros, thank-yous, sign-offs
-- Sponsorship reads or product pitches
+- Any worship song, chorus, or musical interlude
+- Intros and self-introductions ("Good morning, welcome...")
+- Offering announcements, event announcements, housekeeping
+- Closing prayer or benediction
 - Filler content ("um", "so", "anyway")
 - Overlapping with already-selected moments
 
@@ -124,6 +141,7 @@ REQUIREMENTS:
 - Each moment must be ~${safeLength}s long (endTime - startTime ≈ ${safeLength})
 - Moments must be non-overlapping
 - Start/end times must be within [0, ${Math.round(videoEnd)}]
+- ALL selected moments must be from spoken preaching/teaching, never from music
 
 CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
 [{"startTime": <number>, "endTime": <number>}, ...]`;
@@ -135,7 +153,7 @@ CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
       messages: [
         {
           role: "system",
-          content: `You are a JSON-only viral clip selector. Return a raw JSON array with EXACTLY ${safeCount} element(s). Nothing else.`,
+          content: `You are a JSON-only viral clip selector for church sermon content. Select ONLY from preaching/teaching segments — never from worship music or song lyrics. Return a raw JSON array with EXACTLY ${safeCount} element(s). Nothing else.`,
         },
         { role: "user", content: prompt },
       ],
