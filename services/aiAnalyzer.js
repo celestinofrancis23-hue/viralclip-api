@@ -161,7 +161,15 @@ async function analyzeViralMoments({ transcript, clipLength, clipCount }) {
     console.log(`✅ [AI] Validação final OK: ${moments.length}/${safeCount} clips gerados`);
   }
 
-  console.log(`📋 Momentos finais (${moments.length}):`, moments);
+  moments.forEach((m, i) => {
+    console.log(
+      `📋 [AI] Clip ${i + 1}: ${m.startTime}s–${m.endTime}s | ` +
+      `score=${m.emotionScore} type=${m.momentType} | ` +
+      `hook="${(m.hook || "").slice(0, 60)}" | ` +
+      `thumb="${m.thumbnailText || ""}"`
+    );
+  });
+
   return moments;
 }
 
@@ -233,8 +241,27 @@ REQUIREMENTS:
 - Start/end times must be within [0, ${Math.round(videoEnd)}]
 - ALL selected moments must be from spoken preaching/teaching, NEVER from music or worship singing
 
+OUTPUT FORMAT — for each moment return:
+- startTime: number (seconds)
+- endTime: number (seconds)
+- emotionScore: integer 1–10 (10 = maximum emotional impact / viral potential)
+- momentType: one of "testimony" | "revelation" | "declaration" | "teaching" | "climax" | "humor" | "challenge"
+  • testimony  — personal story or emotional confession
+  • revelation — surprising biblical insight that reframes everything
+  • declaration — bold statement of faith or identity
+  • teaching   — clear biblical principle or explanation
+  • climax     — turning point of a story or illustration
+  • humor      — funny moment or witty line
+  • challenge  — direct call to action rooted in scripture
+- hook: string — ONE sentence (<15 words) in English that hooks the viewer in the first 3 seconds.
+  Must create curiosity, surprise, or emotion. Start with the action/tension, not "In this clip..."
+  Examples: "He gave away everything — and got back more than he imagined."
+            "Your biggest fear is the exact door God wants you to walk through."
+- thumbnailText: string — SHORT title (<6 words) for thumbnail overlay. Punchy, creates curiosity or emotion.
+  Examples: "He Lost Everything", "God's Hidden Secret", "The Moment Everything Changed"
+
 CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
-[{"startTime": <number>, "endTime": <number>}, ...]`;
+[{"startTime":<n>,"endTime":<n>,"emotionScore":<n>,"momentType":"<type>","hook":"<text>","thumbnailText":"<text>"}, ...]`;
 
   let response;
   try {
@@ -243,11 +270,11 @@ CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
       messages: [
         {
           role: "system",
-          content: `You are a JSON-only viral clip selector for church sermon content. Select ONLY from preaching/teaching segments — never from worship music or song lyrics. Return a raw JSON array with EXACTLY ${safeCount} element(s). Nothing else.`,
+          content: `You are a JSON-only viral clip selector for church sermon content. Select ONLY from preaching/teaching segments — never from worship music or song lyrics. Return a raw JSON array with EXACTLY ${safeCount} element(s), each with startTime, endTime, emotionScore, momentType, hook, and thumbnailText. Nothing else.`,
         },
         { role: "user", content: prompt },
       ],
-      temperature: 0.3,
+      temperature: 0.4,
     });
   } catch (err) {
     console.error("❌ [AI] OpenAI API error:", err.message);
@@ -269,12 +296,18 @@ CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
 
   if (!Array.isArray(parsed)) return [];
 
+  const VALID_TYPES = new Set(["testimony","revelation","declaration","teaching","climax","humor","challenge"]);
+
   return parsed
     .filter(m => typeof m.startTime === "number" && typeof m.endTime === "number")
     .filter(m => m.endTime > m.startTime)
     .map(m => ({
-      startTime: Number(m.startTime.toFixed(2)),
-      endTime:   Number(m.endTime.toFixed(2)),
+      startTime:     Number(m.startTime.toFixed(2)),
+      endTime:       Number(m.endTime.toFixed(2)),
+      emotionScore:  typeof m.emotionScore === "number" ? Math.min(10, Math.max(1, Math.round(m.emotionScore))) : 5,
+      momentType:    VALID_TYPES.has(m.momentType) ? m.momentType : "teaching",
+      hook:          typeof m.hook === "string"          ? m.hook.trim()          : "",
+      thumbnailText: typeof m.thumbnailText === "string" ? m.thumbnailText.trim() : "",
     }));
 }
 
@@ -328,7 +361,14 @@ function fillByDensity(existing, targetCount, clipLength, transcript, videoStart
       e => slot.startTime < e.endTime && slot.endTime > e.startTime
     );
     if (!overlaps) {
-      result.push({ startTime: slot.startTime, endTime: slot.endTime });
+      result.push({
+        startTime:     slot.startTime,
+        endTime:       slot.endTime,
+        emotionScore:  5,
+        momentType:    "teaching",
+        hook:          "",
+        thumbnailText: "",
+      });
     }
   }
 

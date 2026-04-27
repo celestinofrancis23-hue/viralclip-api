@@ -315,9 +315,13 @@ function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) 
     if ((end - start) < safeLength * 0.5) continue;
 
     clips.push({
-      clipIndex: clips.length,
-      startTime: Number(start.toFixed(2)),
-      endTime:   Number(end.toFixed(2)),
+      clipIndex:     clips.length,
+      startTime:     Number(start.toFixed(2)),
+      endTime:       Number(end.toFixed(2)),
+      emotionScore:  moment.emotionScore  ?? null,
+      momentType:    moment.momentType    ?? null,
+      hook:          moment.hook          ?? "",
+      thumbnailText: moment.thumbnailText ?? "",
     });
 
     lastEnd = end;
@@ -419,6 +423,17 @@ const viralMoments = buildClipsFromAI(
   settings.clipLength,
   transcript.segments,
   settings.clipCount
+);
+
+// Lookup de metadata AI (hook, thumbnailText, etc.) por clipIndex
+// Usado mais tarde ao construir o output_payload
+const aiMetaByIndex = new Map(
+  viralMoments.map(c => [c.clipIndex, {
+    emotionScore:  c.emotionScore,
+    momentType:    c.momentType,
+    hook:          c.hook,
+    thumbnailText: c.thumbnailText,
+  }])
 );
 
 console.log("🎯 FINAL CLIPS:", viralMoments);
@@ -544,12 +559,17 @@ const videoKey = await uploadToR2(
         jobId
       );
 
+      const aiMeta = aiMetaByIndex.get(clip.clipIndex) || {};
       uploadedClips.push({
-        clipIndex: clip.clipIndex,
-        startTime: clip.startTime,
-        endTime: clip.endTime,
+        clipIndex:     clip.clipIndex,
+        startTime:     clip.startTime,
+        endTime:       clip.endTime,
         videoKey,
         thumbKey,
+        emotionScore:  aiMeta.emotionScore  ?? null,
+        momentType:    aiMeta.momentType    ?? null,
+        hook:          aiMeta.hook          ?? "",
+        thumbnailText: aiMeta.thumbnailText ?? "",
       });
     }
 
