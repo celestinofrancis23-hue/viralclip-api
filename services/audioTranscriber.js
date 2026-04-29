@@ -3,8 +3,7 @@ const fs   = require("fs");
 const path = require("path");
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
-const VAD_THRESHOLD_S        = 5 * 60;    // activar VAD para áudios > 5 min
-const API_THRESHOLD_S        = 20 * 60;   // usar OpenAI API para voz > 20 min
+const API_THRESHOLD_S        = 20 * 60;   // usar OpenAI API para áudio > 20 min
 const LONG_AUDIO_THRESHOLD_S = 10 * 60;   // comprimir para mono 16kHz se > 10 min
 const API_CHUNK_S            = 20 * 60;   // chunkar API em blocos de 20 min
 const API_CHUNK_MAX_BYTES    = 24_000_000; // 24MB — margem abaixo do limite de 25MB da API
@@ -30,10 +29,6 @@ function escapePythonString(v) {
 }
 
 // ── cutAudioSecondHalf ────────────────────────────────────────────────────────
-// Extrai a segunda metade do áudio a partir de startS, convertendo para mono
-// 16kHz (ideal para Whisper). Devolve { path, offset } onde offset é o número
-// de segundos que foi ignorado no início — deve ser somado a todos os timestamps
-// do transcript para reflectir a posição real no vídeo original.
 function cutAudioSecondHalf(audioPath, startS, jobDir) {
   const out = path.join(jobDir, "audio_second_half.wav");
   const r   = spawnSync("ffmpeg", [
@@ -52,8 +47,6 @@ function cutAudioSecondHalf(audioPath, startS, jobDir) {
 }
 
 // ── applyTimestampOffset ──────────────────────────────────────────────────────
-// Soma offsetS a todos os timestamps do transcript.
-// Usado após corte do início para reflectir posição real no vídeo original.
 function applyTimestampOffset(transcript, offsetS) {
   return {
     ...transcript,
@@ -104,89 +97,6 @@ function compressAudioIfNeeded(audioPath, jobDir) {
   const compMB = (fs.statSync(out).size / 1048576).toFixed(1);
   console.log(`✅ [Transcriber] Comprimido: ${origMB}MB → ${compMB}MB`);
   return out;
-}
-
-// ── runVadPreprocessor ────────────────────────────────────────────────────────
-// Chama scripts/vad_preprocessor.py e devolve o conteúdo do vad_segments.json.
-// Devolve null se VAD falhar (o transcriber continua sem VAD como fallback).
-function runVadPreprocessor(audioPath, jobDir) {
-  return new Promise((resolve) => {
-    const scriptPath = path.join(__dirname, "..", "scripts", "vad_preprocessor.py");
-    const vadDir     = path.join(jobDir, "vad");
-    ensureDir(vadDir);
-
-    console.log("🎙️  [VAD] A executar pré-processador...");
-
-    const proc = spawn(resolvePythonBinary(), [scriptPath, audioPath, vadDir], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", d => { stdout += d; console.log("[VAD]", d.toString().trim()); });
-    proc.stderr.on("data", d => { stderr += d; console.error("[VAD stderr]", d.toString().trim()); });
-
-    const timer = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch (_) {}
-      console.warn("⚠️  [VAD] Timeout — a prosseguir sem VAD");
-      resolve(null);
-    }, 5 * 60 * 1000); // 5 min timeout para VAD
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        console.warn(`⚠️  [VAD] Saiu com code=${code} — a prosseguir sem VAD`);
-        return resolve(null);
-      }
-      const jsonPath = path.join(vadDir, "vad_segments.json");
-      if (!fileExistsAndHasSize(jsonPath, 10)) {
-        console.warn("⚠️  [VAD] JSON não gerado — a prosseguir sem VAD");
-        return resolve(null);
-      }
-      try {
-        const result = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-        console.log(`✅ [VAD] ${result.segment_count} segmentos, ${Math.round(result.total_voice_duration)}s de voz (${result.method})`);
-        resolve(result);
-      } catch (e) {
-        console.warn("⚠️  [VAD] Falha a ler JSON:", e.message);
-        resolve(null);
-      }
-    });
-  });
-}
-
-// ── remapTranscript ───────────────────────────────────────────────────────────
-// Converte timestamps do áudio concatenado de volta para o áudio original.
-// segments: [{concat_start, concat_end, original_start, original_end}]
-function remapTimestamp(t, segments) {
-  for (const seg of segments) {
-    if (t >= seg.concat_start && t <= seg.concat_end) {
-      return seg.original_start + (t - seg.concat_start);
-    }
-  }
-  // Fora de todos os segmentos — mapear para o fim do último
-  const last = segments[segments.length - 1];
-  return last.original_start + (t - last.concat_start);
-}
-
-function remapTranscript(transcript, vadSegments) {
-  if (!vadSegments || !Array.isArray(vadSegments.segments) || !vadSegments.segments.length) {
-    return transcript;
-  }
-  const segs = vadSegments.segments;
-  return {
-    ...transcript,
-    segments: transcript.segments.map(seg => ({
-      ...seg,
-      start: remapTimestamp(seg.start, segs),
-      end:   remapTimestamp(seg.end, segs),
-      words: (seg.words || []).map(w => ({
-        ...w,
-        start: remapTimestamp(w.start, segs),
-        end:   remapTimestamp(w.end, segs),
-      })),
-    })),
-  };
 }
 
 // ── transcribeLocalWhisper ────────────────────────────────────────────────────
@@ -273,8 +183,6 @@ except Exception as e:
 }
 
 // ── transcribeWithOpenAIAPI ───────────────────────────────────────────────────
-// Usa OpenAI Whisper API para áudio > 60 min (mais robusto para ficheiros longos).
-// Chunk em blocos de API_CHUNK_S segundos, depois funde os transcripts.
 async function transcribeWithOpenAIAPI(audioPath, transcriptPath) {
   const OpenAI = require("openai");
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -298,12 +206,10 @@ async function transcribeWithOpenAIAPI(audioPath, transcriptPath) {
   const fileSizeBytes = fs.statSync(workPath).size;
   console.log(`📦 [Transcriber] Ficheiro para API: ${(fileSizeBytes / 1048576).toFixed(1)}MB`);
 
-  // Determinar se precisa de chunking
   const needsChunking = fileSizeBytes > API_CHUNK_MAX_BYTES;
   const allSegments = [];
 
   if (!needsChunking) {
-    // Ficheiro único
     const resp = await openai.audio.transcriptions.create({
       file:                   fs.createReadStream(workPath),
       model:                  "whisper-1",
@@ -312,7 +218,6 @@ async function transcribeWithOpenAIAPI(audioPath, transcriptPath) {
     });
     (resp.segments || []).forEach(s => allSegments.push(s));
   } else {
-    // Dividir em chunks de API_CHUNK_S segundos
     const nChunks = Math.ceil(duration / API_CHUNK_S);
     console.log(`📋 [Transcriber] A dividir em ${nChunks} chunks de ${API_CHUNK_S / 60} min...`);
 
@@ -342,7 +247,6 @@ async function transcribeWithOpenAIAPI(audioPath, transcriptPath) {
         timestamp_granularities: ["word", "segment"],
       });
 
-      // Adicionar offset do chunk aos timestamps
       (resp.segments || []).forEach(s => {
         allSegments.push({
           ...s,
@@ -390,18 +294,16 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
 
   ensureDir(jobDir);
 
-  const transcriptPath = path.join(jobDir, "transcript.json");
-  const originalDuration = getAudioDuration(audioPath);
-  const timeoutMs        = Number(process.env.WHISPER_TIMEOUT_MS) > 0
+  const transcriptPath    = path.join(jobDir, "transcript.json");
+  const originalDuration  = getAudioDuration(audioPath);
+  const timeoutMs         = Number(process.env.WHISPER_TIMEOUT_MS) > 0
     ? Number(process.env.WHISPER_TIMEOUT_MS)
-    : 600_000; // 10 min
+    : 600_000;
 
   console.log(`🎧 [Transcriber] jobId=${jobId || "N/A"} duração=${Math.round(originalDuration)}s`);
 
   // ── 0. Cortar início se vídeo muito longo (culto de igreja) ───────────────
-  // Se > 60 min, os primeiros 50% são provavelmente louvor/música.
-  // Transcrever apenas a segunda metade e corrigir os timestamps no final.
-  let timeOffset = 0;
+  let timeOffset  = 0;
   let rawDuration = originalDuration;
 
   if (originalDuration > CHURCH_CUT_THRESHOLD_S) {
@@ -410,37 +312,19 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
       `✂️  [Transcriber] Vídeo longo (${Math.round(originalDuration / 60)}min) — ` +
       `a ignorar primeiros ${Math.round(cutStart / 60)}min (provável louvor)`
     );
-    const cut = cutAudioSecondHalf(audioPath, cutStart, jobDir);
+    const cut   = cutAudioSecondHalf(audioPath, cutStart, jobDir);
     audioPath   = cut.path;
     timeOffset  = cut.offset;
     rawDuration = getAudioDuration(audioPath);
     console.log(`⏱️  [Transcriber] Duração após corte: ${Math.round(rawDuration)}s (offset=${Math.round(timeOffset)}s)`);
   }
 
-  // ── 1. VAD para áudios longos ─────────────────────────────────────────────
-  let vadResult   = null;
-  let audioToUse  = audioPath;
+  // ── 1. Compressão mono 16kHz se necessário ────────────────────────────────
+  const audioToUse    = compressAudioIfNeeded(audioPath, jobDir);
+  const voiceDuration = getAudioDuration(audioToUse);
+  console.log(`⏱️  [Transcriber] Áudio para Whisper: ${Math.round(voiceDuration)}s`);
 
-  if (rawDuration >= VAD_THRESHOLD_S) {
-    console.log(`🎙️  [Transcriber] Duração ≥ ${VAD_THRESHOLD_S / 60}min — a executar VAD...`);
-    vadResult = await runVadPreprocessor(audioPath, jobDir);
-
-    if (vadResult && vadResult.voice_audio_path && fs.existsSync(vadResult.voice_audio_path)) {
-      audioToUse = vadResult.voice_audio_path;
-      console.log(`✅ [Transcriber] A usar áudio VAD (${Math.round(vadResult.total_voice_duration)}s de voz)`);
-    } else {
-      console.warn("⚠️  [Transcriber] VAD falhou — a usar áudio original comprimido");
-      audioToUse = compressAudioIfNeeded(audioPath, jobDir);
-    }
-  } else {
-    // Sem VAD: apenas comprimir se necessário
-    audioToUse = compressAudioIfNeeded(audioPath, jobDir);
-  }
-
-  const voiceDuration = vadResult ? vadResult.total_voice_duration : getAudioDuration(audioToUse);
-  console.log(`⏱️  [Transcriber] Áudio efectivo para Whisper: ${Math.round(voiceDuration)}s`);
-
-  // ── 2. Transcrição: local ou API ──────────────────────────────────────────
+  // ── 2. Transcrição: local se < 20min, OpenAI API se ≥ 20min ──────────────
   let transcript;
 
   if (voiceDuration >= API_THRESHOLD_S) {
@@ -449,9 +333,9 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
   } else {
     console.log(`💻 [Transcriber] ${Math.round(voiceDuration)}s < ${API_THRESHOLD_S / 60}min — a usar Whisper local (tiny)`);
     transcript = await transcribeLocalWhisper({
-      audioPath:      audioToUse,
+      audioPath:    audioToUse,
       transcriptPath,
-      pythonBinary:   resolvePythonBinary(),
+      pythonBinary: resolvePythonBinary(),
       timeoutMs,
     });
   }
@@ -460,21 +344,13 @@ module.exports = async function audioTranscriber({ audioPath, jobId, jobDir }) {
     throw new Error("[Transcriber] Transcript em formato inválido");
   }
 
-  // ── 3. Remapear timestamps VAD → posição no áudio cortado ────────────────
-  if (vadResult && vadResult.segments && vadResult.segments.length) {
-    console.log("🗺️  [Transcriber] A remapear timestamps VAD → posição no áudio cortado...");
-    transcript = remapTranscript(transcript, vadResult);
-  }
-
-  // ── 4. Aplicar offset do corte → posição real no vídeo original ──────────
+  // ── 3. Aplicar offset do corte → posição real no vídeo original ──────────
   if (timeOffset > 0) {
-    console.log(`⏱️  [Transcriber] A aplicar offset de ${Math.round(timeOffset)}s — timestamps → posição no vídeo original`);
+    console.log(`⏱️  [Transcriber] A aplicar offset de ${Math.round(timeOffset)}s`);
     transcript = applyTimestampOffset(transcript, timeOffset);
   }
 
-  // Gravar transcript final (com todos os timestamps corrigidos)
   fs.writeFileSync(transcriptPath, JSON.stringify(transcript, null, 2), "utf-8");
-
   console.log(`✅ [Transcriber] Transcrição concluída — ${transcript.segments.length} segmentos`);
 
   return { transcript, transcriptPath };
