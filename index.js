@@ -541,6 +541,46 @@ const aiMetaByIndex = new Map(
 
 console.log("🎯 FINAL CLIPS:", viralMoments);
 
+// ── MANUAL REVIEW MODE ───────────────────────────────────────────────────
+const isManualReview =
+  job.settings?.manualReview === true ||
+  job.jobContract?.settings?.manualReview === true;
+
+if (isManualReview) {
+  console.log("📝 Manual review mode enabled — stopping after Moment Analyzer");
+
+  const manualPayload = {
+    mode: "manual_review",
+    moments: viralMoments.map(moment => ({
+      clipIndex:     moment.clipIndex,
+      startTime:     moment.startTime,
+      endTime:       moment.endTime,
+      duration:      Number((moment.endTime - moment.startTime).toFixed(2)),
+      emotionScore:  moment.emotionScore  || null,
+      momentType:    moment.momentType    || null,
+      hook:          moment.hook          || "",
+      thumbnailText: moment.thumbnailText || "",
+      transcript:    getTranscriptForMoment(transcript.segments, moment.startTime, moment.endTime),
+    })),
+  };
+
+  const now = new Date().toISOString();
+  await supabaseAdmin
+    .from("clip_jobs")
+    .update({
+      status:         "moments_ready",
+      progress:       100,
+      output_payload: manualPayload,
+      updated_at:     now,
+      finished_at:    now,
+    })
+    .eq("jobId", jobId);
+
+  console.log("✅ Moments saved:", manualPayload.moments.length);
+  return;
+}
+// ────────────────────────────────────────────────────────────────────────
+
 writeJobStatus(jobDir, "generating clips", { progress: 60 });
 
     // 5️⃣ Clip Assembler
@@ -1237,6 +1277,22 @@ const PORT = process.env.PORT || 3000;
 /* ======================================================
    🔧 HELPERS — face timeline + video probe
 ====================================================== */
+
+/**
+ * Collects transcript segments that overlap [startTime, endTime] and joins them as one string.
+ */
+function getTranscriptForMoment(transcriptSegments, startTime, endTime) {
+  if (!Array.isArray(transcriptSegments)) return "";
+  return transcriptSegments
+    .filter(seg => {
+      const segStart = seg.start ?? seg.startTime ?? 0;
+      const segEnd   = seg.end   ?? seg.endTime   ?? 0;
+      return segEnd >= startTime && segStart <= endTime;
+    })
+    .map(seg => (seg.text || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
 
 /**
  * Obtém as dimensões reais do vídeo via ffprobe.
