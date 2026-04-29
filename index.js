@@ -113,6 +113,70 @@ app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  POST /jobs/:jobId/complete-manual
+//  Completa um job manualmente após upload externo de clips.
+//  Apenas armazena as keys — não gera URLs.
+//
+//  Body: { userId, clips: [{ clipIndex, videoKey, thumbKey }] }
+//  Response: { ok: true }
+// ─────────────────────────────────────────────────────────────────────────────
+app.post("/jobs/:jobId/complete-manual", async (req, res) => {
+  const { jobId } = req.params;
+  const { userId, clips } = req.body;
+
+  if (!jobId || !userId) {
+    return res.status(400).json({ ok: false, error: "jobId e userId são obrigatórios" });
+  }
+
+  if (!Array.isArray(clips) || clips.length === 0) {
+    return res.status(400).json({ ok: false, error: "clips é obrigatório e não pode estar vazio" });
+  }
+
+  // Validar shape de cada clip
+  for (const clip of clips) {
+    if (typeof clip.clipIndex !== "number" || !clip.videoKey || !clip.thumbKey) {
+      return res.status(400).json({ ok: false, error: "Cada clip precisa de clipIndex (number), videoKey e thumbKey" });
+    }
+  }
+
+  try {
+    // 1. Verificar que o job existe e pertence ao userId
+    const { data: job, error: fetchErr } = await supabaseAdmin
+      .from("clip_jobs")
+      .select("jobId, userId")
+      .eq("jobId", jobId)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
+
+    if (!job || job.userId !== userId) {
+      return res.status(403).json({ ok: false, error: "Unauthorized or not found" });
+    }
+
+    // 2. Actualizar status e output_payload
+    const { error: updateErr } = await supabaseAdmin
+      .from("clip_jobs")
+      .update({
+        status:         "clips_ready",
+        output_payload: clips,
+        progress:       100,
+        updated_at:     new Date().toISOString(),
+      })
+      .eq("jobId", jobId);
+
+    if (updateErr) throw updateErr;
+
+    console.log(`✅ [complete-manual] jobId=${jobId} marcado como clips_ready (${clips.length} clips)`);
+
+    return res.status(200).json({ ok: true });
+
+  } catch (err) {
+    console.error(`❌ [complete-manual] jobId=${jobId}:`, err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  POST /analyze-moments
 //  Pipeline mode: análise pura de momentos virais sem clip assembly.
 //  Aceita o transcript já transcrito e devolve apenas a lista de momentos.
