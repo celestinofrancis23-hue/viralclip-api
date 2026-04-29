@@ -182,7 +182,7 @@ async function callGPT({ simplified, videoEnd, safeCount, safeLength, exclude })
     ? `\nAlready selected (DO NOT overlap these):\n${JSON.stringify(exclude.map(m => ({ start: m.startTime, end: m.endTime })))}`
     : "";
 
-  const prompt = `You are an expert viral content editor for TikTok, Instagram Reels, and YouTube Shorts specialising in church sermon and teaching content.
+  const prompt = `You are a viral content expert specialising in church sermon clips for Instagram Reels, TikTok and YouTube Shorts.
 
 Transcript (JSON):
 ${JSON.stringify(simplified).slice(0, 12000)}
@@ -191,59 +191,55 @@ Video total duration: ${Math.round(videoEnd)}s${excludeNote}
 
 Task: Select exactly ${safeCount} viral moment(s) from this transcript.
 
-⚠️ CONTENT TYPE: This is a church service recording. It contains a mix of PREACHING/TEACHING and WORSHIP/MUSIC sections.
+Find moments that are COMPLETE, EMOTIONAL and IMPACTFUL on their own.
+
+⚠️ CONTENT TYPE: This is a church service recording containing PREACHING/TEACHING and WORSHIP/MUSIC sections.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IMPORTANT RULES — STRICTLY FOLLOW (violations = wrong output):
-1. ONLY select moments where a pastor/preacher is speaking, teaching or preaching
-2. NEVER select moments with worship music, singing, or congregational singing
-3. NEVER select moments where the audience/congregation is singing or responding in song
-4. The selected moments must contain SPOKEN WORDS only — no music, no singing
-5. If a moment has background music but someone is speaking, it is acceptable
-6. Prioritize moments with: powerful statements, biblical teaching, emotional testimony, life-changing insights
+STRICT RULES — violations = wrong output:
+1. ONLY select moments where a pastor/preacher is actively speaking or teaching
+2. NEVER select worship music, singing, or congregational singing
+3. NEVER select announcements, offerings, or housekeeping
+4. NEVER cut mid-sentence — each moment must be a COMPLETE thought
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-HOW TO IDENTIFY WORSHIP/MUSIC (DO NOT SELECT):
-- Repeated lyrics or chorus lines (same phrase repeated 2+ times)
-- Words like "hallelujah", "glory", "praise", "worship", "amen" used as song lyrics
-- Short fragmented words without complete sentences
-- No biblical explanation or teaching structure
-- Congregation or worship leader singing together
+MOMENT DURATION:
+- Each moment should capture 15–25 seconds of actual spoken content
+- startTime = exact second the key phrase or complete thought BEGINS
+- endTime = exact second that complete thought ENDS (never cut mid-sentence)
 
-HOW TO IDENTIFY PREACHING (SELECT FROM HERE ONLY):
-- Complete sentences explaining scripture, theology, or life principles
-- Pastor addressing the congregation ("you need to...", "God wants...", "the Bible says...")
-- Stories, illustrations, or examples that make a theological point
-- Questions posed to the congregation followed by answers/teaching
-- Direct commands or calls to action rooted in scripture
-- Emotional personal testimony or confession from the preacher
+PRIORITISE THESE TYPES (in order):
+1. Strong declarations — "God told me...", "I almost gave up...", "This changes everything..."
+2. Narrative turning points — "But then everything changed...", "That's when I realised..."
+3. Direct address to viewer — "You need to hear this...", "If you're going through..."
+4. Revelations — "Nobody ever told me that...", "What I discovered was..."
+5. Genuine emotional peaks — voice breaking, dramatic pause, raw honesty, tears
+6. Quotable one-liners — theologically rich, punchy, the kind of phrase someone would share
 
-VIRAL MOMENT CRITERIA (within preaching sections only) — prioritise in this order:
-1. Emotional peaks — vulnerability, raw honesty, breakthrough moment
-2. Powerful revelations or surprising biblical insights that reframe everything
-3. Story climax — the moment a personal story or illustration lands
-4. Bold declarations of faith or challenging calls to action
-5. Quotable one-liners — short, punchy, theologically rich phrases
-6. Moments of humour or congregation engagement within the sermon
+HOW TO IDENTIFY A GREAT VIRAL MOMENT:
+✅ Complete sentence with strong emotional or theological weight
+✅ Works standalone — viewer understands it with ZERO context from the rest of the sermon
+✅ Creates immediate curiosity, conviction, or emotion in the first 3 seconds
+✅ The kind of phrase someone would screenshot, send to a friend, or save
 
-STRICTLY AVOID:
-- Any worship song, chorus, or musical interlude — even if it sounds powerful
-- Intros and self-introductions ("Good morning, welcome...")
-- Offering announcements, event announcements, housekeeping
-- Closing prayer or benediction
-- Filler content ("um", "so", "anyway")
+PENALISE HEAVILY (do not select):
+- Music, worship songs, or singing of any kind
+- Incomplete thoughts or phrases cut mid-sentence
+- Moments where the pastor is reading from notes (monotone, unnatural rhythm)
+- Announcements, event info, offering calls, greetings
+- Filler content ("um", "so", "you know", "anyway")
+- Generic openings or self-introductions
 - Overlapping with already-selected moments
 
 REQUIREMENTS:
 - Return EXACTLY ${safeCount} moment(s) — this is mandatory
-- Each moment must be ~${safeLength}s long (endTime - startTime ≈ ${safeLength})
+- Each moment: endTime - startTime must be between 15 and 25 seconds
 - Moments must be non-overlapping
 - Start/end times must be within [0, ${Math.round(videoEnd)}]
-- ALL selected moments must be from spoken preaching/teaching, NEVER from music or worship singing
 
 OUTPUT FORMAT — for each moment return:
-- startTime: number (seconds)
-- endTime: number (seconds)
+- startTime: number (seconds) — where the key thought begins
+- endTime: number (seconds) — where the complete thought ends
 - emotionScore: integer 1–10 (10 = maximum emotional impact / viral potential)
 - momentType: one of "testimony" | "revelation" | "declaration" | "teaching" | "climax" | "humor" | "challenge"
   • testimony  — personal story or emotional confession
@@ -270,7 +266,7 @@ CRITICAL: Return ONLY a raw JSON array. No markdown, no explanation, no wrapper.
       messages: [
         {
           role: "system",
-          content: `You are a JSON-only viral clip selector for church sermon content. Select ONLY from preaching/teaching segments — never from worship music or song lyrics. Return a raw JSON array with EXACTLY ${safeCount} element(s), each with startTime, endTime, emotionScore, momentType, hook, and thumbnailText. Nothing else.`,
+          content: `You are a JSON-only viral clip selector for church sermon content. Select ONLY complete, emotional, impactful spoken moments (15–25s each) from preaching/teaching — never from worship music or song lyrics. Return a raw JSON array with EXACTLY ${safeCount} element(s), each with startTime, endTime, emotionScore, momentType, hook, and thumbnailText. Nothing else.`,
         },
         { role: "user", content: prompt },
       ],

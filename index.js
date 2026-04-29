@@ -373,23 +373,45 @@ function writeJobStatus(jobDir, status, extra = {}) {
 
 function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) {
   const maxClipsRequested = Number(clipCount) || 5;
+
+  const videoEnd =
+    transcriptSegments?.length > 0
+      ? Number(
+          transcriptSegments[transcriptSegments.length - 1].end ||
+          transcriptSegments[transcriptSegments.length - 1].endTime ||
+          0
+        )
+      : 0;
+
   const clips = [];
 
   for (const moment of aiMoments) {
     if (clips.length >= maxClipsRequested) break;
 
-    const aiStart = Number(moment.startTime);
-    const aiEnd   = Number(moment.endTime);
+    const momentStart = Number(moment.startTime);
+    const momentEnd   = Number(moment.endTime);
 
-    if (!Number.isFinite(aiStart) || !Number.isFinite(aiEnd) || aiEnd <= aiStart) continue;
+    if (!Number.isFinite(momentStart) || !Number.isFinite(momentEnd) || momentEnd <= momentStart) continue;
 
-    const start = Number(Math.max(0, aiStart - 1).toFixed(2));
-    const end   = Number((aiEnd + 1).toFixed(2));
+    // Add 3s of natural context on each side
+    let clipStart = Math.max(0, momentStart - 3);
+    let clipEnd   = momentEnd + 3;
+
+    // Enforce 20–40s duration range
+    const dur = clipEnd - clipStart;
+    if (dur < 20) clipEnd = clipStart + 20;
+    if (dur > 40) clipEnd = clipStart + 40;
+
+    // Clamp to video end
+    if (videoEnd > 0 && clipEnd > videoEnd) {
+      clipEnd   = videoEnd;
+      clipStart = Math.max(0, clipEnd - 40);
+    }
 
     clips.push({
       clipIndex:     clips.length,
-      startTime:     start,
-      endTime:       end,
+      startTime:     Number(clipStart.toFixed(2)),
+      endTime:       Number(clipEnd.toFixed(2)),
       emotionScore:  moment.emotionScore  ?? null,
       momentType:    moment.momentType    ?? null,
       hook:          moment.hook          ?? "",
