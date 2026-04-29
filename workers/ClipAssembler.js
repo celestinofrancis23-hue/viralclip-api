@@ -37,7 +37,7 @@ function sanitizeTime(value) {
 }
 
 // 🔥 FFmpeg EXECUTOR (ULTRA CONTROLADO)
-function cutClip({ videoPath, clipPath, start, duration, clipIndex }) {
+function cutClip({ videoPath, clipPath, start, end, clipIndex }) {
   return new Promise((resolve, reject) => {
     const args = [
       "-hide_banner",
@@ -45,8 +45,8 @@ function cutClip({ videoPath, clipPath, start, duration, clipIndex }) {
       "-y",
 
       "-ss", start.toFixed(3),
+      "-to", end.toFixed(3),
       "-i", videoPath,
-      "-t", duration.toFixed(3),
 
       "-map", "0:v:0?",
       "-map", "0:a:0?",
@@ -174,7 +174,7 @@ module.exports = async function ClipAssembler({
         videoPath,
         clipPath,
         start,
-        duration,
+        end,
         clipIndex,
       });
 

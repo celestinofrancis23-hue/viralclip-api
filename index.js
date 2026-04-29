@@ -372,100 +372,32 @@ function writeJobStatus(jobDir, status, extra = {}) {
 }
 
 function buildClipsFromAI(aiMoments, clipLength, transcriptSegments, clipCount) {
+  const maxClipsRequested = Number(clipCount) || 5;
+  const clips = [];
 
-  const safeLength        = Number(clipLength) || 30;
-  const maxClipsRequested = Number(clipCount)  || 5;
-
-  // Duração total do vídeo
-  const videoEnd =
-    transcriptSegments?.length > 0
-      ? Number(
-          transcriptSegments[transcriptSegments.length - 1].end ||
-          transcriptSegments[transcriptSegments.length - 1].endTime ||
-          0
-        )
-      : 0;
-
-  if (!videoEnd || videoEnd <= 0) {
-    console.warn("⚠️ buildClipsFromAI: videoEnd inválido");
-    return [];
-  }
-
-  const maxPossibleClips = Math.floor(videoEnd / safeLength);
-  const finalClipLimit   = Math.min(maxClipsRequested, maxPossibleClips);
-
-  const clips  = [];
-  let lastEnd  = 0;
-
-  // ── 1. Processar momentos da AI ──────────────────────────────────────────
   for (const moment of aiMoments) {
-    if (clips.length >= finalClipLimit) break;
+    if (clips.length >= maxClipsRequested) break;
 
-    let start = Number(moment.startTime);
-    if (!Number.isFinite(start)) continue;
+    const aiStart = Number(moment.startTime);
+    const aiEnd   = Number(moment.endTime);
 
-    // Resolver sobreposição: empurrar o início para depois do clip anterior
-    if (start < lastEnd) {
-      start = lastEnd;
-    }
+    if (!Number.isFinite(aiStart) || !Number.isFinite(aiEnd) || aiEnd <= aiStart) continue;
 
-    let end = start + safeLength;
-
-    // Não ultrapassar o vídeo
-    if (end > videoEnd) end = videoEnd;
-
-    // Ignorar clips muito curtos (< 50% do clipLength) — só perto do fim do vídeo
-    if ((end - start) < safeLength * 0.5) continue;
+    const start = Number(Math.max(0, aiStart - 1).toFixed(2));
+    const end   = Number((aiEnd + 1).toFixed(2));
 
     clips.push({
       clipIndex:     clips.length,
-      startTime:     Number(start.toFixed(2)),
-      endTime:       Number(end.toFixed(2)),
+      startTime:     start,
+      endTime:       end,
       emotionScore:  moment.emotionScore  ?? null,
       momentType:    moment.momentType    ?? null,
       hook:          moment.hook          ?? "",
       thumbnailText: moment.thumbnailText ?? "",
     });
-
-    lastEnd = end;
   }
 
-  // ── 2. Fallback: preencher os clips em falta ─────────────────────────────
-  // Activa sempre que o número de clips gerados é inferior ao pedido,
-  // não só quando clips.length === 0 (bug anterior).
-  if (clips.length < finalClipLimit) {
-    console.warn(`⚠️ buildClipsFromAI: AI gerou ${clips.length}/${finalClipLimit} — a preencher com slots livres`);
-
-    // Construir regiões ocupadas
-    const occupied = clips.map(c => ({ start: c.startTime, end: c.endTime }))
-      .sort((a, b) => a.start - b.start);
-
-    // Encontrar regiões livres
-    const freeRegions = [];
-    let cursor = 0;
-    for (const seg of occupied) {
-      if (seg.start > cursor + 1) freeRegions.push({ start: cursor, end: seg.start });
-      cursor = Math.max(cursor, seg.end);
-    }
-    if (cursor + safeLength <= videoEnd) freeRegions.push({ start: cursor, end: videoEnd });
-
-    // Regiões maiores primeiro para maximizar qualidade
-    freeRegions.sort((a, b) => (b.end - b.start) - (a.end - a.start));
-
-    for (const region of freeRegions) {
-      let t = region.start;
-      while (t + safeLength <= region.end && clips.length < finalClipLimit) {
-        clips.push({
-          clipIndex: clips.length,
-          startTime: Number(t.toFixed(2)),
-          endTime:   Number((t + safeLength).toFixed(2)),
-        });
-        t += safeLength;
-      }
-    }
-  }
-
-  console.log(`📋 buildClipsFromAI: ${clips.length}/${finalClipLimit} clips gerados`);
+  console.log(`📋 buildClipsFromAI: ${clips.length}/${maxClipsRequested} clips gerados`);
   return clips.sort((a, b) => a.startTime - b.startTime);
 }
 
