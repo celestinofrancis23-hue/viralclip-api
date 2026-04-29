@@ -404,4 +404,175 @@ function generateFreeSlots(sorted, videoStart, videoEnd, clipLength) {
   return slots;
 }
 
-module.exports = { analyzeViralMoments };
+// ─────────────────────────────────────────────────────────────────────────────
+//  analyzeMomentsOnly
+//  Pipeline mode: análise pura sem clip assembly.
+//  Usa o transcript COMPLETO (sem truncar), deixa o GPT definir as fronteiras
+//  naturais de cada momento (sem clipLength fixo).
+//
+//  Input:  { transcript: Segment[], clipCount: number }
+//  Output: { moments: [{ startTime, endTime, duration, hook }] }
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function analyzeMomentsOnly({ transcript, clipCount }) {
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    throw new Error("[analyzeMomentsOnly] transcript vazio ou inválido");
+  }
+
+  const safeCount = Math.max(1, Number(clipCount) || 5);
+
+  // Filtrar música antes de enviar ao GPT
+  const filtered = filterMusicSegments(transcript);
+  if (filtered.length === 0) {
+    throw new Error("[analyzeMomentsOnly] Transcript vazio após filtro de música");
+  }
+
+  // Formato compacto para maximizar contexto sem truncar
+  // Cada segmento → { s, e, t } em vez do objeto completo com words[]
+  const compact = filtered.map(seg => ({
+    s: Number((seg.start ?? 0).toFixed(2)),
+    e: Number((seg.end   ?? 0).toFixed(2)),
+    t: (seg.text || "").trim(),
+  }));
+
+  const videoStart = compact[0].s;
+  const videoEnd   = compact[compact.length - 1].e;
+
+  console.log(
+    `🎯 [analyzeMomentsOnly] ${compact.length} segmentos | ` +
+    `${Math.round(videoEnd)}s de conteúdo | a pedir ${safeCount} momentos`
+  );
+
+  // ── Chamada ao GPT (full transcript, natural boundaries) ──────────────────
+  const moments = await callGPTNaturalBoundaries({ compact, clipCount: safeCount, videoEnd });
+
+  // ── Validação ─────────────────────────────────────────────────────────────
+  if (moments.length < safeCount) {
+    console.warn(
+      `⚠️  [analyzeMomentsOnly] GPT devolveu ${moments.length}/${safeCount} momentos. ` +
+      `Conteúdo insuficiente para preencher todos os clips pedidos.`
+    );
+  }
+
+  console.log(`✅ [analyzeMomentsOnly] ${moments.length} momentos finais:`);
+  moments.forEach((m, i) =>
+    console.log(`  ${i + 1}. ${m.startTime}s–${m.endTime}s (${m.duration}s) — "${(m.hook || "").slice(0, 60)}"`)
+  );
+
+  return { moments };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  callGPTNaturalBoundaries
+//  Versão sem clipLength fixo — o GPT escolhe os limites naturais do discurso.
+//  Usa timestamps exactos dos segmentos para garantir cortes limpos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function callGPTNaturalBoundaries({ compact, clipCount, videoEnd }) {
+  // Transcript COMPLETO em formato compacto — sem slice, sem truncar
+  const transcriptJson = JSON.stringify(compact);
+
+  const prompt = `You are a viral content editor specialising in church sermon clips for TikTok, Instagram Reels, and YouTube Shorts.
+
+TRANSCRIPT (format: [{s: startSeconds, e: endSeconds, t: "text"}, ...]):
+${transcriptJson}
+
+Total duration: ${Math.round(videoEnd)}s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TASK: Select EXACTLY ${clipCount} moments with the highest viral potential.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BOUNDARY RULES (MANDATORY — violations = wrong output):
+1. startTime MUST equal the "s" value of a segment where a new complete thought BEGINS
+2. endTime MUST equal the "e" value of a segment where a complete thought ENDS
+3. NEVER cut mid-sentence — startTime and endTime must be exact segment boundaries
+4. Each moment must be SELF-CONTAINED — understandable with no context from outside
+5. Select as many consecutive segments as needed to capture a complete thought
+6. No fixed duration — let the natural length of the idea define the clip
+
+CONTENT RULES:
+- ONLY select moments from PREACHING or TEACHING — spoken words by the pastor
+- NEVER select worship music, singing, or congregational responses
+- NO overlapping moments
+- Sort results: best quality first (index 0 = highest viral potential)
+
+PRIORITY ORDER (rank by this):
+1. Raw emotional moment — pastor breaks down, confesses vulnerability, cries
+2. Revelation — surprising insight that completely reframes a belief
+3. Story climax — the turning point where a personal story lands its lesson
+4. Bold declaration — a statement of faith so sharp it hits like a punch
+5. Challenge — a call to action that creates immediate conviction or urgency
+
+HOOK RULES:
+- Write ONE sentence in English, under 15 words
+- Must grab attention in the first 3 seconds
+- Use curiosity, surprise, or emotional tension
+- Start with the action or tension — NEVER with "In this clip..." or "Here..."
+- Examples:
+  "He gave everything away — and then God showed up."
+  "The moment he stopped praying was the moment everything changed."
+  "Your biggest fear is the exact door God wants you to walk through."
+
+OUTPUT — return ONLY this JSON, no markdown, no explanation:
+{"moments":[{"startTime":<s>,"endTime":<e>,"duration":<e-s>,"hook":"<text>"},...]}`;
+
+  let response;
+  try {
+    response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a JSON-only viral clip selector. Return a raw JSON object with a "moments" array containing EXACTLY ${clipCount} element(s). Use ONLY segment boundary timestamps from the transcript. Never truncate a thought. Nothing else.`,
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.3,
+    });
+  } catch (err) {
+    console.error("❌ [analyzeMomentsOnly] OpenAI error:", err.message);
+    return [];
+  }
+
+  let content = response.choices?.[0]?.message?.content;
+  if (!content) return [];
+
+  content = content.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    console.error("❌ [analyzeMomentsOnly] Parse error:", content.slice(0, 400));
+    return [];
+  }
+
+  // Aceita tanto { moments: [...] } como [...] directamente
+  const raw = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.moments) ? parsed.moments : []);
+
+  // Validar que os timestamps existem no transcript (segurança)
+  const validStarts = new Set(compact.map(s => s.s));
+  const validEnds   = new Set(compact.map(s => s.e));
+
+  return raw
+    .filter(m => typeof m.startTime === "number" && typeof m.endTime === "number")
+    .filter(m => m.endTime > m.startTime)
+    .filter(m => {
+      const startOk = validStarts.has(Number(m.startTime.toFixed(2)));
+      const endOk   = validEnds.has(Number(m.endTime.toFixed(2)));
+      if (!startOk || !endOk) {
+        console.warn(`⚠️  [analyzeMomentsOnly] Timestamp inválido descartado: ${m.startTime}–${m.endTime}`);
+      }
+      return startOk && endOk;
+    })
+    .map(m => ({
+      startTime: m.startTime,
+      endTime:   m.endTime,
+      duration:  Number((m.endTime - m.startTime).toFixed(2)),
+      hook:      typeof m.hook === "string" ? m.hook.trim() : "",
+    }))
+    .slice(0, clipCount);
+}
+
+module.exports = { analyzeViralMoments, analyzeMomentsOnly };

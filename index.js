@@ -31,7 +31,7 @@ const validateJobContract = require("./validators/validateJobContract");
 const videoDownloader = require("./services/videoDownloader");
 const audioExtractor = require("./services/audioExtractor");
 const audioTranscriber = require("./services/audioTranscriber");
-const { analyzeViralMoments } = require("./services/aiAnalyzer");
+const { analyzeViralMoments, analyzeMomentsOnly } = require("./services/aiAnalyzer");
 const ClipAssembler = require("./workers/ClipAssembler");
 const faceDetectionWorker = require("./workers/faceDetectionWorker");
 const CropPathWalker = require("./workers/verticalCropEngine/analyzers/CropPathWalker");
@@ -111,6 +111,45 @@ const downloadUrlLimiter = rateLimit({
 
 app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /analyze-moments
+//  Pipeline mode: análise pura de momentos virais sem clip assembly.
+//  Aceita o transcript já transcrito e devolve apenas a lista de momentos.
+//
+//  Body: { transcript: { segments: [...] }, clipCount: number }
+//  Response: { ok: true, moments: [{ startTime, endTime, duration, hook }] }
+// ─────────────────────────────────────────────────────────────────────────────
+app.post("/analyze-moments", generateClipsLimiter, async (req, res) => {
+  const { transcript, clipCount, userId } = req.body;
+
+  // Validação básica
+  if (!transcript || !Array.isArray(transcript.segments) || transcript.segments.length === 0) {
+    return res.status(400).json({ ok: false, error: "transcript.segments é obrigatório e não pode estar vazio" });
+  }
+
+  const safeCount = Math.max(1, Math.min(20, Number(clipCount) || 5));
+
+  try {
+    console.log(`🎯 [/analyze-moments] userId=${userId || "N/A"} | segments=${transcript.segments.length} | clipCount=${safeCount}`);
+
+    const result = await analyzeMomentsOnly({
+      transcript: transcript.segments,
+      clipCount:  safeCount,
+    });
+
+    console.log(`✅ [/analyze-moments] ${result.moments.length} momentos devolvidos`);
+
+    return res.status(200).json({
+      ok:      true,
+      moments: result.moments,
+    });
+
+  } catch (err) {
+    console.error("❌ [/analyze-moments] Erro:", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
       
 // ===============================
 // BILLING - START (Checkout ou Portal)
