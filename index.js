@@ -143,13 +143,13 @@ app.post("/jobs/:jobId/complete-manual", async (req, res) => {
     // 1. Verificar que o job existe e pertence ao userId
     const { data: job, error: fetchErr } = await supabaseAdmin
       .from("clip_jobs")
-      .select("jobId, userId")
+      .select("jobId, user_id")
       .eq("jobId", jobId)
       .maybeSingle();
 
     if (fetchErr) throw fetchErr;
 
-    if (!job || job.userId !== userId) {
+    if (!job || job.user_id !== userId) {
       return res.status(403).json({ ok: false, error: "Unauthorized or not found" });
     }
 
